@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lynra.kafkatower</groupId>
+        <artifactId>kafkatower-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>kafkatower-kafka</artifactId>
+    <packaging>jar</packaging>
+    <name>KafkaTower - Kafka</name>
+
+    <!-- Live Kafka investigation: KafkaInvestigator specialist, consumer-group inspection
+         (GroupService/GroupController), AdminClient config, and the KafkaAdminClientTools LLM
+         tool. Depends on kafkatower-metrics because KafkaInvestigator reuses MetricsSkillTools
+         (Admin First, Metrics Second correlation). -->
+    <dependencies>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-metrics</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>

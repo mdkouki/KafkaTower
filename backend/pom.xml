@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lynra.kafkatower</groupId>
+        <artifactId>kafkatower-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>kafkatower-backend</artifactId>
+    <packaging>pom</packaging>
+    <name>KafkaTower - Backend</name>
+
+    <!-- Backend is a domain-module aggregator: common holds cross-domain infra, each of
+         registry/metrics/kafka/log owns one domain's specialist + controller/service/repository,
+         and app is the only executable module — it wires everything together (orchestrator,
+         KafkaTowerApplication, application.yml) and depends on all the others. See each
+         module's own pom.xml <dependencies> for the actual inter-module dependency edges;
+         this parent only manages external library versions and inherits shared ones so
+         every child doesn't have to repeat groupId/version boilerplate. -->
+    <modules>
+        <module>kafkatower-common</module>
+        <module>kafkatower-registry</module>
+        <module>kafkatower-metrics</module>
+        <module>kafkatower-kafka</module>
+        <module>kafkatower-log</module>
+        <module>kafkatower-app</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>4.1.1</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>2.0.1</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- Shared external dependencies, inherited by every submodule. Which project-internal
+         modules a given submodule may depend on (common/registry/metrics/kafka/log) is declared
+         explicitly in that submodule's own pom.xml — that's the actual domain boundary. -->
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-ldap</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ldap</groupId>
+            <artifactId>spring-ldap-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- @DataJpaTest moved out of spring-boot-starter-test into its own starter in Spring Boot 4 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Embabel agent framework -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter-openai</artifactId>
+            <version>1.5.1</version>
+        </dependency>
+
+        <!-- Embabel observability: traces agent/action/tool-loop/LLM spans automatically.
+             No-op without an exporter on the classpath and management.tracing.export.enabled. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter-observability</artifactId>
+            <version>1.5.1</version>
+        </dependency>
+
+        <!-- Standard OTLP span exporter — sends Embabel's spans (registered by
+             embabel-agent-starter-observability above) to any OTLP-compatible receiver via
+             management.otlp.tracing.*. Langfuse's own endpoint accepts OTLP directly, so this
+             talks straight to it with no Langfuse-specific client code — see LangfuseOtlpAuth
+             for how the Basic Auth header is derived from LANGFUSE_PUBLIC_KEY/SECRET_KEY. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
+        <!-- Spring AI OpenAI model (Embabel uses this for LLM calls) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- Spring AI MCP client — connects to VictoriaMetrics MCP SSE server -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
+
+        <!-- Reactor (streaming in ChatService / ChatController) -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+        </dependency>
+
+
+        <!-- spring-boot-starter-aop was removed in Spring Boot 4; spring-aop itself is
+             already pulled in transitively, aspectjweaver is what the starter used to add -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- Flyway — schema migrations for H2 (dev) and PostgreSQL (prod). Spring Boot 4 moved
+             FlywayAutoConfiguration out of spring-boot-autoconfigure into its own module,
+             brought in here via the starter (which also pulls flyway-core transitively). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Preserves parameter names in bytecode for Spring AI tool schema generation -->
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

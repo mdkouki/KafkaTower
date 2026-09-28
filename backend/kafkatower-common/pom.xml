@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lynra.kafkatower</groupId>
+        <artifactId>kafkatower-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>kafkatower-common</artifactId>
+    <packaging>jar</packaging>
+    <name>KafkaTower - Common</name>
+
+    <!-- Cross-domain infra: security, config, utils, chatbot support, LLM settings, prompt
+         analytics, agent audit/guardrails/streaming, the Specialist interface, and the MCP
+         client plumbing (VmMcpClientProvider/McpHealthChecker/ReconnectingMcpTool) shared by
+         the kafka and metrics domains. Depends on no other domain module — everyone else
+         depends on this. -->
+</project>

@@ -1,0 +1,214 @@
+server:
+  port: 8089
+  compression:
+    enabled: true
+    mime-types: application/json,application/javascript,text/css,text/html
+    min-response-size: 2048
+
+embabel:
+  models:
+    default-llm: gpt-5.1
+  agent:
+    platform:
+      models:
+        openai:
+          api-key: ${ECGPT_API_KEY}
+          base-url: https://api.tech.ec.europa.eu/ecgpt
+      observability:
+        enabled: true
+        service-name: kafkatower
+        max-attribute-length: 2000
+
+spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  web:
+    resources:
+      static-locations: classpath:/static/
+      add-mappings: true
+  datasource:
+    url: jdbc:h2:file:./kafkatower-db
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/{vendor}
+    # baseline-on-migrate: true when upgrading an existing H2 instance that was managed by ddl-auto.
+    # Flyway will mark it as at V1 baseline and only apply new migrations (V2+).
+    # Set to false (or omit) for a fresh PostgreSQL install so V1 runs in full.
+    baseline-on-migrate: true
+    baseline-version: 1
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+
+  ai:
+    mcp:
+      client:
+        enabled: false   # client created manually in AgentMcpConfig (Spring AI SSE config has no header support)
+
+    openai:
+      api-key: ${ECGPT_API_KEY}
+      base-url: https://api.tech.ec.europa.eu/ecgpt
+      chat:
+        options:
+          model: gpt-5.1
+
+agent:
+  orchestration:
+    # KafkaInspector's draft -> reviewer -> refine loop: max rounds before returning the last
+    # draft regardless of the reviewer's verdict (every draft is still reviewed, including the last).
+    max-rounds: 2
+  llm:
+    # Any LLM call (classification, draft, completeness-check, or a specialist's own call)
+    # slower than this logs a warning — see SlowLlmCallLogger.
+    slow-call-warning-ms: 15000
+  mcp:
+    vm-url: http://localhost:8083
+    vm-token: ""    # optional: Bearer token for secured VictoriaMetrics
+    vm-tenant: ""   # optional: X-Scope-OrgID for multi-tenant VictoriaMetrics
+    # Transport: sse (GET /sse + POST /message — session dies with the SSE stream)
+    # or streamable (POST /mcp — session id in Mcp-Session-Id header; use behind
+    # load balancers/proxies; requires MCP_SERVER_MODE=http on the vm-mcp server)
+    vm-transport: sse
+
+    # OpenSearch (KafkaLogInspector) — talks directly to OpenSearch's REST API on each
+    # cluster's own host:port, authenticating with HTTP basic auth. Used instead of
+    # OpenSearch's native MCP server because the OpenSearch version deployed here does
+    # not support it (see OpenSearchClientProvider / OpenSearchQueryTools).
+    # `index` is the default index (or wildcard pattern, e.g. app-logs-*) queried for that
+    # cluster; the LLM can still target a different index name per call.
+    # Set enabled: true and configure at least one cluster to activate the agent.
+    os:
+      enabled: true
+      default-cluster: nonprod   # used when a question doesn't name a cluster
+      clusters:
+        nonprod:
+          url: http://localhost:9200
+          index: app-logs-kafka
+#        prod:
+#          url: https://opensearch-prod:9200
+#          username: admin
+#          password: "${OS_PROD_PASSWORD:}"
+#          index: app-logs-*
+
+
+management:
+  tracing:
+    export:
+      # Standard Spring/Micrometer OTLP tracing pipeline — no Langfuse-specific client in the
+      # app. Auto-enabled only once an endpoint is actually configured (see below); harmless
+      # to leave `true` otherwise since OtlpTracingAutoConfiguration itself no-ops without one.
+      enabled: true
+    sampling:
+      probability: 1.0
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          # Plain OTLP, no vendor client or credentials in the app — this points at the local
+          # OTel Collector (compose.yml's otel-collector service, OTLP HTTP on 4318), which
+          # forwards to whichever trace sink it's configured for (see
+          # config/otel-collector/otel-collector-config.yaml). Override for a different
+          # collector/OTLP receiver, or point straight at a backend that needs no auth.
+          endpoint: ${OTEL_COLLECTOR_ENDPOINT:http://localhost:6006/v1/traces}
+          # Auth header for the collector/backend at the endpoint above, if it requires one
+          # (e.g. Phoenix with PHOENIX_ENABLE_AUTH=True — see
+          # config/otel-collector/otel-collector-config.yaml). Set OTEL_COLLECTOR_AUTH_HEADER
+          # (e.g. "Bearer <token>") in the environment; never hardcode a token here.
+          headers:
+            authorization: "Bearer ${OTEL_COLLECTOR_AUTH_API_KEY}"
+
+kafka:
+  clusters:
+    # Both point at the docker-compose broker's EXTERNAL listener (localhost:9092), which
+    # requires SASL/PLAIN — see compose.yml's KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG
+    # for the full user list and config/kafka/init-acls.sh for what 'kafkatower' is allowed to do
+    # (broad read-only: Describe/DescribeConfigs/Read on every topic/group, Describe on
+    # cluster/transactional-ids — this app only inspects, it never produces/consumes/deletes).
+    nonprod:
+      bootstrap-servers: localhost:9092
+      security-protocol: SASL_PLAINTEXT
+      sasl:
+        mechanism: PLAIN
+        username: kafkatower
+        password: ${KAFKA_KAFKATOWER_PASSWORD:kafkatower-secret}
+    prod:
+      bootstrap-servers: localhost:9092
+      security-protocol: SASL_PLAINTEXT
+      sasl:
+        mechanism: PLAIN
+        username: kafkatower
+        password: ${KAFKA_KAFKATOWER_PASSWORD:kafkatower-secret}
+    # SSL/mTLS example:
+    # prod-cluster:
+    #   bootstrap-servers: broker1:9092,broker2:9092
+    #   security-protocol: SSL
+    #   ssl:
+    #     keystore-location: /etc/kafka/certs/client.p12
+    #     keystore-password: changeit
+    #     keystore-type: PKCS12
+    #     key-password: changeit
+    #     truststore-location: /etc/kafka/certs/truststore.p12
+    #     truststore-password: changeit
+    #     truststore-type: PKCS12
+
+app:
+  security:
+    mode: jaas   # jaas | ldap | oidc
+
+    api-clients:
+      - name: kafka-ui
+        token: ${API_TOKEN_KAFKA_UI:changeme-kafka-ui}
+      - name: conduktor
+        token: ${API_TOKEN_CONDUKTOR:changeme-conduktor}
+
+    jaas:
+      users:
+        - username: admin
+          password: "admin123"
+          role: ADMIN
+        - username: user
+          password: "user123"
+          role: USER
+
+    ldap:
+      url: ldap://localhost:389
+      userDn: 'cn=admin,dc=example,dc=com'
+      password: 'adminpassword'
+      base: dc=example,dc=com
+      user-search-base: ou=people
+      user-search-filter: "(uid={0})"
+      default-role: USER
+      # Group-search mode (local OpenLDAP): populate roles from group membership
+      #group-search-base: ou=groups
+      #group-search-filter: "(member={0})"
+      #role-mappings:
+      #  ADMIN: "cn=kafka-admins,ou=groups,dc=example,dc=com"
+      # Attribute mode (real LDAP): omit group-search-base and set user-role-attribute instead
+      # user-role-attribute: cudgroup
+      role-mappings:
+         ADMIN: "KAFKA_ADMIN"
+
+    oidc:
+      issuer-uri: "https://idp.example.com"
+      client-id: "kafkatower"
+      client-secret: "${OIDC_CLIENT_SECRET:}"
+      admin-claim: "groups"
+      admin-group-value: "kafka-admins"
+      user-group-value: "kafka-users"
+
+logging:
+  level:
+    com.lynra.kafkatower: INFO

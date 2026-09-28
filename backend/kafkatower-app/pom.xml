@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lynra.kafkatower</groupId>
+        <artifactId>kafkatower-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>kafkatower-app</artifactId>
+    <packaging>jar</packaging>
+    <name>KafkaTower - App</name>
+
+    <!-- The only executable module: KafkaTowerApplication, application.yml, db/migration,
+         skills/, static/ (frontend build output), and the root orchestrator (KafkaInspector /
+         SubAgentTools / EnrichedSubAgentTools) plus ChatService/ChatController — the
+         orchestrator needs ClusterService (registry) and the live AdminClient map (kafka) and
+         loosely injects every deployed Specialist, so it's the one module that depends on all
+         four domains. -->
+    <dependencies>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-kafka-dependencies</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-metrics</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-kafka</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-log</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>kafkatower-backend-${project.version}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>4.1.1</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,1 @@
+ALTER TABLE llm_settings ALTER COLUMN api_key TYPE VARCHAR(2000);

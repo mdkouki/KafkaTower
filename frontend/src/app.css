@@ -1,0 +1,103 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: dracula --default;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — one dark system used everywhere, no light/dark toggle. */
+  --color-bg: #0a0d12;
+  --color-surface: #12161f;
+  --color-surface-hover: #1a1f2b;
+  --color-surface-sunken: #0e1119;
+  --color-border: #232a38;
+  --color-border-strong: #2f3849;
+
+  /* Text */
+  --color-text-primary: #eef1f7;
+  --color-text-secondary: #a3adc2;
+  --color-text-muted: #6b7688;
+
+  /* One calm accent (cyan/teal) — carries the product's existing identity without the neon glow. */
+  --color-accent: #22d3ee;
+  --color-accent-hover: #67e3f5;
+  --color-accent-light: rgba(34, 211, 238, 0.12);
+  --gradient-accent: linear-gradient(135deg, #22d3ee 0%, #0ea5b7 100%);
+
+  /* Semantic status colors — mapped identically to the previous HUD theme so operators
+     don't have to relearn anything (stable/teal, warning/amber, alert/red). */
+  --color-success: #2dd4bf;
+  --color-warning: #f5a623;
+  --color-danger: #f87171;
+  --color-info: #a78bfa;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 10px -2px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 32px -8px rgba(0, 0, 0, 0.55), 0 4px 10px -4px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 4px 16px -4px rgba(34, 211, 238, 0.3);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  /* Floating/overlay glass */
+  --glass-bg: rgba(18, 22, 31, 0.82);
+  --glass-border: rgba(148, 163, 184, 0.14);
+  --glass-blur: 14px;
+
+  /* Motion — every component-level transition/spring reads these so reduced-motion
+     can be honored from one place. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  font-family: var(--font-sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+  }
+}
+
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+::selection {
+  background: var(--color-accent-light);
+  color: var(--color-text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}

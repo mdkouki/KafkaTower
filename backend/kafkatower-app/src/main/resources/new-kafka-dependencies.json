@@ -1,0 +1,124 @@
+{
+  "kadyc-repository": {
+    "users": [
+      "doru",
+      "elcr",
+      "nese",
+      "avas",
+      "meda",
+      "psmi",
+      "ekpi",
+      "veje",
+      "admin"
+    ],
+    "topics": [
+      "cc_prod_command-provider-flex",
+      "cc_prod_command-participant-sharepoint",
+      "cc_prod_event"
+    ],
+    "services": [
+      {
+        "serviceName": "afs",
+        "groups": [
+          "afs_prod_group"
+        ],
+        "consumes": [
+          "cc_prod_command-provider-flex",
+          "cc_prod_command-participant-sharepoint",
+          "cc_prod_event",
+          "sfc_prod_command",
+          "agri_prd_rdis2",
+          "agri_prd_agri_fin"
+        ],
+        "produces": [
+          "cc_prod_command-participant-afs",
+          "sfc_prod_topic",
+          "sfc_prod_command_reply",
+          "agri_afs_production"
+        ],
+        "principals": [
+          "User:ag-financial-ser"
+        ]
+      },
+      {
+        "serviceName": "afs-backend",
+        "groups": [
+          "afs_prod-backend"
+        ],
+        "consumes": [
+          "ri_prd.*",
+          "ag_backend_fast_track_prod",
+          "prd_p_event",
+          "ag_afs_client_prod"
+        ],
+        "produces": [
+          "prd_p_event",
+          "ag_afs_client_prod",
+          "sfc_prod_command"
+        ],
+        "principals": [
+          "User:ag_prod_afs"
+        ]
+      }
+    ]
+  },
+  "kadyc-repository-2": {
+    "users": [
+      "eltr",
+      "drpa",
+      "ert"
+    ],
+    "topics": [
+      "prod_pp_ee_aa",
+      "prod_aa_ee_rr_xx"
+    ],
+    "services": [
+      {
+        "serviceName": "rex",
+        "groups": [
+          "rex_prd_group"
+        ],
+        "consumes": [
+          "ri_prd_agri_fin",
+          "prod_command-provider-flex",
+          "sc_prod_topic",
+          "cc_prod_event",
+          "prd_rdis2",
+          "prd_p_event",
+          "rex_pro"
+        ],
+        "produces": [
+          "ri_prd_agri_fin",
+          "prod_command-provider-flex",
+          "sc_prod_topic",
+          "cc_prod_event",
+          "ag_backend_fast_track_prod",
+          "prd_p_event",
+          "rex_pro"
+        ],
+        "principals": [
+          "User:rex_prd_eu"
+        ]
+      },
+      {
+        "serviceName": "riflow",
+        "groups": [
+          "riflow_prd_group"
+        ],
+        "consumes": [
+          "prod_command-provider-flex",
+          "prod_event",
+          "prod_ariflow"
+        ],
+        "produces": [
+          "prod_command-provider-flex",
+          "prod_event",
+          "prod_ariflow"
+        ],
+        "principals": [
+          "User:prod_agriflow"
+        ]
+      }
+    ]
+  }
+}

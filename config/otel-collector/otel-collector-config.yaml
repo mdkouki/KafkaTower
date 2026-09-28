@@ -1,0 +1,35 @@
+# OTel Collector sitting between the backend (plain OTLP, no vendor client, no
+# credentials) and Arize Phoenix. Receives OTLP from the app on 4317 (gRPC) /
+# 4318 (HTTP) and forwards to Phoenix's built-in OTLP gRPC receiver. If Phoenix
+# auth is enabled (PHOENIX_ENABLE_AUTH=True), it expects the API key as gRPC
+# metadata — set PHOENIX_API_KEY in the collector's environment (compose.yml
+# or .env), never hardcode it here.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  otlp/phoenix:
+    # Phoenix's internal OTLP gRPC port (not the host-mapped one).
+    endpoint: phoenix:4317
+    tls:
+      insecure: true
+    headers:
+      authorization: "Bearer ${env:PHOENIX_API_KEY}"
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/phoenix, debug]

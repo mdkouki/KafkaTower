@@ -1,0 +1,394 @@
+services:
+
+  # ── Kafka (KRaft, single-node, SASL_PLAINTEXT/PLAIN) ────────────────────────
+  # Listener aliases are deliberately underscore-free (INTERNAL/EXTERNAL/CONTROLLER, not
+  # e.g. SASL_PLAINTEXT) — the apache/kafka image maps KAFKA_* env vars to server.properties
+  # by turning each literal '.' into '_', so an underscore already inside the listener name
+  # would need escaping as '__' in listener-scoped keys (KAFKA_LISTENER_NAME_<NAME>_...).
+  # Plain aliases avoid that ambiguity entirely. CONTROLLER stays PLAINTEXT: single-node,
+  # only ever talks to itself, never exposed outside this container.
+  #
+  # Every principal's password and the exact ACLs each one gets are defined in
+  # config/kafka/init-acls.sh (run once by the acl-init service below) — that file is the
+  # single source of truth for "who is allowed to do what" on this cluster.
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092" # EXTERNAL listener — direct host access on localhost:9092
+      - "29092:29092"
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "localhost:24224"
+        tag: kafka.broker
+        fluentd-async: "true"   # don't block Kafka startup if Fluent Bit isn't ready yet
+    depends_on:
+      - fluent-bit
+    healthcheck:
+      # Plain TCP check, no SASL handshake — sufficient for compose ordering and avoids
+      # needing credentials just to prove the broker is accepting connections.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/9092' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:SASL_PLAINTEXT,EXTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # ── SASL/PLAIN ────────────────────────────────────────────────────────
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_LISTENER_NAME_INTERNAL_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: PLAIN
+      # One static user list for both listeners. 'admin' is also the broker's own
+      # inter-broker identity (the bare username="..."/password="..." pair PlainLoginModule
+      # uses for its own login, separate from the user_<name> entries it validates clients
+      # against) — fine for a single-node dev cluster where the broker only talks to itself.
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: &kafka_jaas >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="admin"
+        password="admin-secret"
+        user_admin="admin-secret"
+        user_kafkatower="kafkatower-secret"
+        user_order-service="order-service-secret"
+        user_fulfillment-service="fulfillment-service-secret"
+        user_logistics-service="logistics-service-secret"
+        user_akhq="akhq-secret"
+        user_kminion="kminion-secret"
+        user_kafka-exporter="kafka-exporter-secret";
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: *kafka_jaas
+
+      # ── Authorization (StandardAuthorizer, native to KRaft) ────────────────
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      # ANONYMOUS must be a superuser too: the CONTROLLER listener stays PLAINTEXT (see the
+      # comment on the broker block above), so the broker's own BROKER_REGISTRATION /
+      # inter-controller requests arrive there unauthenticated, as User:ANONYMOUS — without
+      # this, StandardAuthorizer rejects them with CLUSTER_AUTHORIZATION_FAILED and the broker
+      # can never register with the controller. super.users is semicolon-, not comma-, separated.
+      KAFKA_SUPER_USERS: User:admin;User:ANONYMOUS;User:akhq
+      # Without this, StandardAuthorizer allows everything when no ACL matches — every
+      # principal below only gets what config/kafka/init-acls.sh explicitly grants it.
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+
+  # One-shot: waits for the broker, then creates every topic the demo apps and their ACLs
+  # reference (see the script for why this can't just be left to auto.create.topics.enable).
+  # Runs before acl-init — mirrors the opensearch-init pattern below, runs once, never restarts.
+  topic-init:
+    image: apache/kafka:latest
+    container_name: topic-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    volumes:
+      - ./config/kafka/init-topics.sh:/init-topics.sh:ro
+    entrypoint: ["bash", "/init-topics.sh"]
+
+  # One-shot: waits for the broker, then grants every non-superuser principal exactly the
+  # ACLs it needs (see the script for the full per-principal breakdown). Mirrors the
+  # opensearch-init pattern below — runs once, exits, never restarts.
+  acl-init:
+    image: apache/kafka:latest
+    container_name: acl-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: "no"
+    volumes:
+      - ./config/kafka/init-acls.sh:/init-acls.sh:ro
+    entrypoint: ["bash", "/init-acls.sh"]
+
+
+
+  # ── AKHQ ───────────────────────────────────────────────────────────────────
+  akhq:
+    image: tchiotludo/akhq:latest
+    ports:
+      - "8084:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kafka:
+              properties:
+                bootstrap.servers: "kafka:29092"
+                security.protocol: SASL_PLAINTEXT
+                sasl.mechanism: PLAIN
+                sasl.jaas.config: >-
+                  org.apache.kafka.common.security.plain.PlainLoginModule required
+                  username="akhq" password="akhq-secret";
+
+  # ── order-service ──────────────────────────────────────────────────────────
+  order-service:
+    build:
+      context: ./demo-app
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_SASL_MECHANISM: PLAIN
+      KAFKA_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="order-service" password="order-service-secret";
+      # Showcases the registry's transactional-ids field — see config/kafka/init-acls.sh
+      # for the matching order-txn* PREFIXED ACL grant.
+      KAFKA_PRODUCER_TRANSACTIONAL_ID: order-txn-1
+      DEMO_APP_NAME: order-service
+      DEMO_CONSUMER_GROUP: order-service-group
+      DEMO_CONSUMES: >-
+        orders.commands.provider,
+        orders.commands.participant,
+        orders.events,
+        fulfillment.commands,
+        inventory.snapshots,
+        finance.settlements
+      DEMO_PRODUCES: >-
+        orders.commands.confirmed,
+        fulfillment.updates,
+        fulfillment.command-replies,
+        inventory.production
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+
+  # ── fulfillment-service ────────────────────────────────────────────────────
+  fulfillment-service:
+    build:
+      context: ./demo-app
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_SASL_MECHANISM: PLAIN
+      KAFKA_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="fulfillment-service" password="fulfillment-service-secret";
+      DEMO_APP_NAME: fulfillment-service
+      DEMO_CONSUMER_GROUP: fulfillment-service-group
+      DEMO_CONSUMES: >-
+        shipments.*,
+        fulfillment.fast-track,
+        platform.events,
+        fulfillment.client-updates
+      DEMO_PRODUCES: >-
+        platform.events,
+        fulfillment.client-updates,
+        fulfillment.commands
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+
+  # ── logistics-service ──────────────────────────────────────────────────────
+  logistics-service:
+    build:
+      context: ./demo-app
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      KAFKA_SASL_MECHANISM: PLAIN
+      KAFKA_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="logistics-service" password="logistics-service-secret";
+      DEMO_APP_NAME: logistics-service
+      DEMO_CONSUMER_GROUP: logistics-service-group
+      DEMO_CONSUMES: >-
+        shipments.finance,
+        orders.commands.provider.v2,
+        fulfillment.updates.v2,
+        orders.events,
+        inventory.snapshots.v2,
+        platform.events,
+        logistics.status
+      DEMO_PRODUCES: >-
+        shipments.finance,
+        orders.commands.provider.v2,
+        fulfillment.updates.v2,
+        orders.events,
+        fulfillment.fast-track,
+        platform.events,
+        logistics.status
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - victoriametrics
+
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    container_name: victoriametrics
+    hostname: victoriametrics
+    ports:
+      - "8428:8428"
+    volumes:
+      - ./config/scrape.yml:/etc/victoriametrics/scrape.yml
+    command:
+      - -promscrape.config=/etc/victoriametrics/scrape.yml
+
+  vm-mcp:
+    image: ghcr.io/victoriametrics-community/mcp-victoriametrics:latest
+    container_name: vm-mcp
+    hostname: vm-mcp
+    depends_on:
+      - victoriametrics
+    ports:
+      - "8083:8080"
+    environment:
+      - VM_INSTANCE_ENTRYPOINT=http://victoriametrics:8428
+      - VM_INSTANCE_TYPE=single
+      - MCP_SERVER_MODE=sse
+      - MCP_LISTEN_ADDR=:8080
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    hostname: kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+    ports:
+      - "9308:9308"
+    command:
+      # Port 9092 is EXTERNAL, advertised as localhost:9092 (KAFKA_ADVERTISED_LISTENERS
+      # above) for host-machine access — a container client bootstrapping there gets told to
+      # reconnect to "localhost", which inside kafka-exporter's own container means itself, not
+      # the kafka container (dial tcp [::1]:9092: connection refused). 29092 is the internal
+      # listener, advertised as kafka:29092 — what every other in-network client (akhq, this
+      # app's own Kafka clients) already uses.
+      - --kafka.server=kafka:29092
+      - --sasl.enabled
+      - --sasl.username=kafka-exporter
+      - --sasl.password=kafka-exporter-secret
+      - --sasl.mechanism=plain
+
+
+  # ── OpenSearch (KafkaLogInspector log/trace source) ────────────────────────
+  # Queried directly over its REST API by OpenSearchQueryTools (basic auth) —
+  # this OpenSearch build doesn't support the native MCP server, so there's no
+  # MCP endpoint to enable here.
+  opensearch:
+    image: opensearchproject/opensearch:3.8.0
+    container_name: opensearch
+    hostname: opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"\\(green\\|yellow\\)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: creates the app-logs-kafka index with an explicit mapping before
+  # Fluent Bit starts writing to it, so field types (esp. @timestamp) aren't
+  # left to dynamic-mapping guesswork on the first indexed document.
+  opensearch-init:
+    image: curlimages/curl:8.10.1
+    container_name: opensearch-init
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      sh -c "
+      curl -s -o /dev/null -w '%{http_code}' -X PUT http://opensearch:9200/app-logs-kafka
+      -H 'Content-Type: application/json'
+      -d '{\"mappings\":{\"properties\":{
+        \"@timestamp\":{\"type\":\"date\"},
+        \"log\":{\"type\":\"text\"},
+        \"container_id\":{\"type\":\"keyword\"},
+        \"container_name\":{\"type\":\"keyword\"},
+        \"source\":{\"type\":\"keyword\"}
+      }}}'
+      | grep -qE '^(200|201|400)$$'
+      "
+
+  # ── Fluent Bit (forwards Kafka broker logs into OpenSearch) ────────────────
+  # Receives the `kafka` service's container logs via its `fluentd` logging
+  # driver (compose.yml: fluentd-address localhost:24224, tag kafka.broker)
+  # and writes them into the app-logs-kafka index created above.
+  fluent-bit:
+    image: fluent/fluent-bit:3.1.9
+    container_name: fluent-bit
+    hostname: fluent-bit
+    depends_on:
+      opensearch-init:
+        condition: service_completed_successfully
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    volumes:
+      - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+
+  kminion:
+    image: redpandadata/kminion:latest
+    hostname: kminion
+    restart: always
+    depends_on:
+      kafka:
+        condition: service_healthy
+      acl-init:
+        condition: service_completed_successfully
+    ports:
+      - "8088:8080"
+    environment:
+      # The address of your Kafka brokers
+      - KAFKA_BROKERS=kafka:29092
+
+      # Enable specific features (e.g., consumer group lag)
+      - KMINION_EXPORTERS_PROMETHEUS_ENABLED=true
+      - KMINION_EXPORTERS_PROMETHEUS_NAMESPACE=kminion
+
+      # Granularity of metrics
+      - KMINION_KAFKA_GRANULARITY=topic
+      - KMINION_CONSUMER_GROUPS_GRANULARITY=partition
+
+      # SASL Auth — broker requires it now (see config/kafka/init-acls.sh for kminion's ACLs)
+      - KMINION_KAFKA_SASL_ENABLED=true
+      - KMINION_KAFKA_SASL_USERNAME=kminion
+      - KMINION_KAFKA_SASL_PASSWORD=kminion-secret
+      - KMINION_KAFKA_SASL_MECHANISM=PLAIN
+
+volumes:
+  opensearch_data:

@@ -1,0 +1,47 @@
+# ============================================
+# openai-models.yml — ECGPT endpoint override
+# Maps Embabel model beans to the models actually
+# available on api.tech.ec.europa.eu/ecgpt/v1
+# ============================================
+
+models:
+
+  # ECGPT available models
+
+  - name: "gpt-5.1"
+    model_id: "gpt-5.1"
+    display_name: "GPT-5.1"
+    knowledge_cutoff_date: "2024-10-01"
+    max_tokens: 16384
+    temperature: 1.0
+    special_handling:
+      supports_temperature: false
+
+  - name: "gptOss120b"
+    model_id: "gpt-oss-120b"
+    display_name: "GPT-OSS-120B"
+    knowledge_cutoff_date: "2024-10-01"
+    max_tokens: 16384
+    temperature: 1.0
+
+  - name: "mistralMedium"
+    model_id: "mistral-medium-2508"
+    display_name: "Mistral Medium 2508"
+    knowledge_cutoff_date: "2024-10-01"
+    max_tokens: 16384
+    temperature: 1.0
+
+  - name: "mistralSmall"
+    model_id: "mistral-small-3.2-24b-instruct-2506"
+    display_name: "Mistral Small 3.2"
+    knowledge_cutoff_date: "2024-10-01"
+    max_tokens: 16384
+    temperature: 1.0
+
+embedding_models:
+  - name: "text_embedding_3_small"
+    model_id: "text-embedding-3-small"
+    display_name: "Text Embedding 3 Small"
+    dimensions: 1536
+    pricing_model:
+      usd_per1m_tokens: 0.02

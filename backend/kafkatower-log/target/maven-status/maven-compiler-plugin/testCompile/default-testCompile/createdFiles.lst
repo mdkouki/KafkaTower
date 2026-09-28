@@ -1,0 +1,4 @@
+com/lynra/kafkatower/agents/specialists/config/OpenSearchClientProviderTest.class
+com/lynra/kafkatower/tools/OpenSearchQueryToolsTest.class
+com/lynra/kafkatower/agents/specialists/config/OpenSearchClientRegistryTest.class
+com/lynra/kafkatower/agents/specialists/log/KafkaLogInspectorTest.class

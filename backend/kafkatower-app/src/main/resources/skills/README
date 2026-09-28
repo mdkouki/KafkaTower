@@ -1,0 +1,60 @@
+# Skill files digest (modified in feature/flatten-agents-design)
+
+## Resume
+
+Five skill files under `backend/src/main/resources/skills/` are modified in this branch — all system-prompt content concatenated into agents at `@PostConstruct` (per CLAUDE.md's Agent Skills architecture):
+
+- **ROOT_ORCHESTRATOR.md** — the root `KafkaInspector` agent's prompt: checks scope first, resolves cluster names via `listClusters`, decides (no fixed rule) whether to answer directly, call one specialist, or chain several, evaluates every specialist answer before trusting it, and handles reviewer-flagged retry rounds.
+- **KADYC_REGISTRY_TOOLS.md** — appended onto the root prompt (not a separate specialist call). Defines the registry data model (repository → topics/users; service → produces/consumes/groups/principals) and the tool sequence for resolving a service/repository and fetching its full state.
+- **KAFKA_LOG_INSPECTOR.md** — the `KafkaLogInspector` specialist's prompt. Three tools (`aggregate_documents`, `search_documents`, `get_document`); mandates a cheap `aggregate_documents` query to narrow the time window before any `search_documents` call, and tight field/size/time-range limits to stay under the 8KB truncation cap; treats log content as untrusted data.
+- **kafka-investigation/references/kafka-admin-commands.md** — a reference table of read-only Kafka Admin Client operations (brokers, topics, consumer groups, ACLs, configs), each annotated with output-volume risk and a compression rule for large results.
+- **kafka-investigation/references/playbooks/cluster.md** — a concrete 7-step cluster-health investigation procedure (admin overview → broker config → exporter health → protocol errors → replication health → traffic → handler saturation), explicitly forbidding per-topic `describeTopic` calls at cluster scope.
+
+## Diagrams
+
+**Diagram 1 — how the five files relate to each other and to the agents that load them**
+
+```mermaid
+flowchart TD
+    RO["ROOT_ORCHESTRATOR.md<br/>KafkaInspector root prompt"]
+    KADYC["KADYC_REGISTRY_TOOLS.md<br/>registry data model + tool steps"]
+    LOG["KAFKA_LOG_INSPECTOR.md<br/>KafkaLogInspector prompt"]
+    ADMIN["kafka-admin-commands.md<br/>admin op reference table"]
+    CLUSTER["playbooks/cluster.md<br/>cluster health procedure"]
+
+    KADYC -->|"concatenated onto (@PostConstruct)"| RO
+    RO -->|"askLogs(question)"| LOG
+    RO -->|"askInvestigation(question)<br/>only if not answerable via KADYC"| INV["KafkaInvestigator<br/>(not itself a marked file)"]
+    INV -->|"loads as reference"| ADMIN
+    INV -->|"loads as reference"| CLUSTER
+    CLUSTER -->|"maps ops to"| ADMIN
+    LOG -.->|"treats OpenSearch output as"| UNTRUSTED["untrusted data<br/>(prompt-injection guard)"]
+```
+
+**Diagram 2 — the cluster.md investigation procedure**
+
+```mermaid
+flowchart TD
+    S1["Step 1: describeCluster<br/>broker count, controller, cluster ID"] --> S2["Step 2: describeBrokerConfig<br/>(sample one broker)"]
+    S2 --> S3["Step 3: exporter/broker-count metrics<br/>kminion_exporter_up, activebrokercount"]
+    S3 --> S4a["Step 4a: any protocol errors?<br/>sum(rate(errorpersec))"]
+    S4a -->|"zero"| S5["Step 5: replication health<br/>underreplicated / atminisr / ISR<repl"]
+    S4a -->|"non-zero"| S4bcd["Steps 4b–4d: which request type,<br/>error code, broker"] --> S5
+    S5 -->|"underreplicated > 0"| ESC["Escalate: fetch 'topic' scope<br/>playbook for affected topics"]
+    S5 -->|"= 0"| S6["Step 6: traffic overview<br/>bytes + request rate per broker"]
+    S6 --> S7["Step 7: handler saturation<br/>(only if throughput looks abnormal)<br/>requesthandleravgidlepercent"]
+    S7 --> CHK["Cluster Checklist:<br/>brokers present · errors=0 ·<br/>underreplicated=0 · underminisr=0 ·<br/>traffic normal · idle>30%"]
+```
+
+## Walkthrough
+
+**Diagram 1**: `ROOT_ORCHESTRATOR.md` (lines 1–19) states the orchestrator calls specialists via tools with "no fixed routing rule." `KADYC_REGISTRY_TOOLS.md` is explicitly *not* one of those specialist calls — ROOT_ORCHESTRATOR.md line 20–23 says KADYC registry data "is answered directly with your own tools... not through a specialist call," matching CLAUDE.md's note that KADYC_REGISTRY_TOOLS.md is concatenated onto ROOT_ORCHESTRATOR.md at `@PostConstruct` rather than being a separate agent. `askLogs` (line 31) is the orchestrator's call into `KafkaLogInspector`, whose full prompt is `KAFKA_LOG_INSPECTOR.md`. The admin-commands reference and cluster playbook aren't loaded by the root or log inspector at all — per CLAUDE.md, they live under `kafka-investigation/references/` and are concatenated into `KafkaInvestigator`'s system prompt (that agent's own top-level skill file wasn't part of this diff, so it's shown as an unmarked node for context). `cluster.md` step 1–2 and the Output Volume Guide in `kafka-admin-commands.md` share the same admin operations (`describeCluster`, `describeBrokerConfig`), hence the "maps ops to" edge. `KAFKA_LOG_INSPECTOR.md` lines 51–59 are the source for the untrusted-data guard shown as a dashed edge.
+
+**Diagram 2**: This is a direct transcription of `cluster.md`'s numbered steps (lines 11–96). The branch at Step 4a (line 53–54: "If Step 4a returns non-zero... proceed to Step 5. If Step 4a is zero, skip 4b–4d") and the escalation at Step 5 (line 69: "If `sum(...underreplicated...) > 0` → escalate immediately... fetch this playbook's 'topic' scope") are the only two conditional branches stated in the source; everything else is sequential. Step 7 is explicitly conditional ("if throughput looks abnormal," line 82).
+
+## Fidelity notes
+
+- **KADYC_REGISTRY_TOOLS.md** and **KAFKA_LOG_INSPECTOR.md**'s internal tool-call sequences (e.g. the parallel `getServiceDescription`/`getServiceFullStateScan`/`getServiceDependencies` triple, or the log inspector's 3-step time-narrowing procedure) are summarized in the resume but not separately diagrammed — they're same-shape mini-procedures and diagramming all of them alongside the cluster playbook would exceed the 12–15 node guidance without adding new structure. Full detail is in the files themselves (KADYC_REGISTRY_TOOLS.md lines 46–105; KAFKA_LOG_INSPECTOR.md lines 13–33).
+- **kafka-admin-commands.md**'s per-operation compression rules and the Output Volume Guide table are collapsed into a single "admin op reference table" node in Diagram 1 — the table itself (lines 16–121) is the fuller detail, not reproduced here since it's a comparison table, not diagram-shaped content (per Phase 2 guidance).
+- `KafkaInvestigator`'s own top-level agent prompt/skill file was **not** part of the git-modified set, so it's included in Diagram 1 only as an unmarked contextual node (dashed styling would apply if Mermaid rendering distinguished it further) to show where the two reference files actually get loaded — per CLAUDE.md's architecture description, not per a diff in this changeset.
+- Nothing from the five marked files was omitted outright; all cited content traces to the line numbers above.

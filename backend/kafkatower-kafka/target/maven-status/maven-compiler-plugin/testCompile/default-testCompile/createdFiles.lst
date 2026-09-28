@@ -1,0 +1,8 @@
+com/lynra/kafkatower/controller/GroupControllerTest$GroupTestData.class
+com/lynra/kafkatower/testsupport/AdminClientTestSupport.class
+com/lynra/kafkatower/controller/GroupControllerTest.class
+com/lynra/kafkatower/controller/GroupControllerTest$GroupInfoFixture.class
+com/lynra/kafkatower/kafka/GroupServiceTest.class
+com/lynra/kafkatower/kafka/KafkaAdminConfigTest.class
+com/lynra/kafkatower/tools/KafkaAdminClientToolsTest.class
+com/lynra/kafkatower/agents/specialists/kafka/KafkaInvestigatorTest.class

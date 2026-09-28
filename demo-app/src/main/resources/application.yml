@@ -1,0 +1,27 @@
+server:
+  port: 8080
+
+demo:
+  app-name: ${DEMO_APP_NAME:demo}
+  consumer-group: ${DEMO_CONSUMER_GROUP:demo-group}
+  consumes: ${DEMO_CONSUMES:}
+  produces: ${DEMO_PRODUCES:}
+  # Non-blank => this app produces transactionally (see KafkaClientConfig.producerFactory).
+  transactional-id: ${KAFKA_PRODUCER_TRANSACTIONAL_ID:}
+  produce-interval-ms: ${DEMO_PRODUCE_INTERVAL_MS:5000}
+
+# Read directly by KafkaClientConfig, not Spring Boot's Kafka autoconfiguration — this app
+# builds its own ProducerFactory/consumer properties so transactional mode can be enabled
+# per-app (only order-service) without every other app accidentally inheriting it.
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    properties:
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+
+logging:
+  level:
+    com.lynra.demo: INFO

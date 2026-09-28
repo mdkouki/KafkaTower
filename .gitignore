@@ -1,0 +1,14 @@
+/.idea/
+/.claude/
+/backend/target/
+/backend/src/main/resources/static/
+/demo-app/target/
+/frontend/node/
+/frontend/node_modules/
+/.agents/
+/agent_project/
+/.mvn/
+/.remember/
+/graphify-out/
+.DS_Store
+/backend/kafkatower-app/target/

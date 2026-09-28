@@ -1,0 +1,7 @@
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/RegistryTestApplication.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/controller/AclRegistryControllerTest.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/controller/TopicControllerTest.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/service/AclGraphBuilderTest.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/service/AclGraphRefreshJobTest.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/service/TopicGraphBuilderTest.java
+/Volumes/Playground/workspace/Personal/new_horizons/kafkatower/backend/kafkatower-registry/src/test/java/com/lynra/kafkatower/service/TopicGraphRefreshJobTest.java

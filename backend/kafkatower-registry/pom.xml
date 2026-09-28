@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lynra.kafkatower</groupId>
+        <artifactId>kafkatower-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>kafkatower-kafka-dependencies</artifactId>
+    <packaging>jar</packaging>
+    <name>KafkaTower - Registry (KADYC)</name>
+
+    <!-- The KADYC dependency-graph domain: Cluster import/storage, the app/topic/graph model,
+         topic access control, and the KafkaDependenciesTools LLM tool that queries the
+         registry. Depends on kafkatower-kafka because GraphService/KafkaDependenciesTools
+         cross-reference live consumer-group state (GroupService) when building the dependency
+         graph — kafka itself never references registry, so this stays a one-way edge. -->
+    <dependencies>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lynra.kafkatower</groupId>
+            <artifactId>kafkatower-kafka</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>
