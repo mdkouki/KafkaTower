@@ -116,4 +116,79 @@ class LlmSettingsEnvironmentPostProcessorTest {
         assertThat(LlmSettingsEnvironmentPostProcessor.ifExists("jdbc:postgresql://h/db")).isEqualTo("jdbc:postgresql://h/db");
         assertThat(LlmSettingsEnvironmentPostProcessor.ifExists("jdbc:h2:mem:x")).isEqualTo("jdbc:h2:mem:x");
     }
+
+    @Test
+    void savedOpenSearchAndMetricsSectionsOverrideTheYmlProperties() throws Exception {
+        String url = newDatabase();
+        try (Connection c = DriverManager.getConnection(url, "sa", ""); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE admin_settings (section VARCHAR(32) PRIMARY KEY, payload CLOB)");
+            s.execute("INSERT INTO admin_settings VALUES ('opensearch', "
+                    + quote("{\"enabled\":true,\"defaultCluster\":\"prod\",\"clusters\":[{\"name\":\"prod\","
+                    + "\"url\":\"https://os:9200\",\"username\":\"u\",\"password\":\"p\",\"index\":\"logs-*\"}]}") + ")");
+            s.execute("INSERT INTO admin_settings VALUES ('metrics', "
+                    + quote("{\"url\":\"http://vm:8428\",\"token\":\"t\"}") + ")");
+        }
+
+        MockEnvironment env = run(url);
+
+        assertThat(env.getProperty("agent.mcp.os.enabled")).isEqualTo("true");
+        assertThat(env.getProperty("agent.mcp.os.default-cluster")).isEqualTo("prod");
+        assertThat(env.getProperty("agent.mcp.os.clusters[prod].url")).isEqualTo("https://os:9200");
+        assertThat(env.getProperty("agent.mcp.os.clusters[prod].index")).isEqualTo("logs-*");
+        assertThat(env.getProperty("agent.metrics.url")).isEqualTo("http://vm:8428");
+        assertThat(env.getProperty("agent.metrics.token")).isEqualTo("t");
+    }
+
+    @Test
+    void withoutSavedSectionsTheYmlPropertiesStayInEffect() throws Exception {
+        MockEnvironment env = run(newDatabase());
+        env.setProperty("agent.metrics.url", "http://yml:8428");
+
+        assertThat(env.getProperty("agent.metrics.url")).isEqualTo("http://yml:8428");
+    }
+
+    @Test
+    void savedKafkaClustersBecomeKafkaClusterProperties() throws Exception {
+        String url = newDatabase();
+        try (Connection c = DriverManager.getConnection(url, "sa", ""); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE admin_settings (section VARCHAR(32) PRIMARY KEY, payload CLOB)");
+            s.execute("INSERT INTO admin_settings VALUES ('kafka', " + quote("{\"clusters\":["
+                    + "{\"name\":\"plain\",\"bootstrapServers\":\"b:9092\",\"security\":\"NONE\"},"
+                    + "{\"name\":\"tls\",\"bootstrapServers\":\"b:9093\",\"security\":\"MTLS\",\"ssl\":"
+                    + "{\"keystoreLocation\":\"/k.p12\",\"keystorePassword\":\"kp\",\"keystoreType\":\"PKCS12\","
+                    + "\"truststoreLocation\":\"/t.p12\"}},"
+                    + "{\"name\":\"sasl\",\"bootstrapServers\":\"b:9094\",\"security\":\"SASL\",\"sasl\":"
+                    + "{\"mechanism\":\"SCRAM-SHA-512\",\"username\":\"u\",\"password\":\"p\",\"tls\":true},"
+                    + "\"ssl\":{\"truststoreLocation\":\"/t.p12\"}}]}") + ")");
+        }
+
+        MockEnvironment env = run(url);
+
+        assertThat(env.getProperty("kafka.clusters[plain].bootstrap-servers")).isEqualTo("b:9092");
+        assertThat(env.getProperty("kafka.clusters[plain].security-protocol")).isEqualTo("PLAINTEXT");
+        assertThat(env.getProperty("kafka.clusters[tls].security-protocol")).isEqualTo("SSL");
+        assertThat(env.getProperty("kafka.clusters[tls].ssl.keystore-location")).isEqualTo("/k.p12");
+        assertThat(env.getProperty("kafka.clusters[tls].ssl.keystore-password")).isEqualTo("kp");
+        assertThat(env.getProperty("kafka.clusters[sasl].security-protocol")).isEqualTo("SASL_SSL");
+        assertThat(env.getProperty("kafka.clusters[sasl].sasl.mechanism")).isEqualTo("SCRAM-SHA-512");
+        assertThat(env.getProperty("kafka.clusters[sasl].sasl.username")).isEqualTo("u");
+        assertThat(env.getProperty("kafka.clusters[sasl].ssl.truststore-location")).isEqualTo("/t.p12");
+    }
+
+    @Test
+    void anUnreadableSavedSectionDoesNotStopStartup() throws Exception {
+        String url = newDatabase();
+        try (Connection c = DriverManager.getConnection(url, "sa", ""); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE admin_settings (section VARCHAR(32) PRIMARY KEY, payload CLOB)");
+            // what a large-object OID left in the column looks like
+            s.execute("INSERT INTO admin_settings VALUES ('metrics', '16455')");
+            s.execute("INSERT INTO admin_settings VALUES ('opensearch', 'not json')");
+            s.execute("INSERT INTO admin_settings VALUES ('kafka', '{broken')");
+        }
+
+        MockEnvironment env = run(url);
+
+        assertThat(env.getProperty("agent.metrics.url")).isNull();
+        assertThat(env.getProperty("agent.mcp.os.enabled")).isNull();
+    }
 }

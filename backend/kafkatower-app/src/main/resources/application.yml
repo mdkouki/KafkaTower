@@ -1,7 +1,5 @@
 server:
   port: 8089
-  error:
-    include-message: always
   compression:
     enabled: true
     mime-types: application/json,application/javascript,text/css,text/html
@@ -39,6 +37,9 @@ spring:
     virtual:
       enabled: true
   web:
+    error:
+      # The settings panel shows the reason a save was rejected (e.g. a failed connection check).
+      include-message: always
     resources:
       static-locations: classpath:/static/
       add-mappings: true
@@ -73,36 +74,8 @@ agent:
     # Any LLM call (classification, draft, completeness-check, or a specialist's own call)
     # slower than this logs a warning — see SlowLlmCallLogger.
     slow-call-warning-ms: 15000
-  metrics:
-    # Time-series store behind the metrics tools (KafkaMetricsInspector, KafkaInvestigator),
-    # queried directly over the Prometheus-compatible HTTP API: VictoriaMetrics (default
-    # port 8428), Prometheus (9090), Thanos, Mimir... For VictoriaMetrics cluster, include
-    # the tenant path in the URL, e.g. http://vmselect:8481/select/0/prometheus
-    url: http://localhost:8428
-    token: ""      # optional: Bearer token
-    username: ""   # optional: HTTP basic auth (ignored when a token is set)
-    password: ""
-    tenant: ""     # optional: X-Scope-OrgID for multi-tenant Mimir/Cortex/Thanos
-  mcp:
-    # OpenSearch (KafkaLogInspector) — talks directly to OpenSearch's REST API on each
-    # cluster's own host:port, authenticating with HTTP basic auth. Used instead of
-    # OpenSearch's native MCP server because the OpenSearch version deployed here does
-    # not support it (see OpenSearchClientProvider / OpenSearchQueryTools).
-    # `index` is the default index (or wildcard pattern, e.g. app-logs-*) queried for that
-    # cluster; the LLM can still target a different index name per call.
-    # Set enabled: true and configure at least one cluster to activate the agent.
-    os:
-      enabled: true
-      default-cluster: nonprod   # used when a question doesn't name a cluster
-      clusters:
-        nonprod:
-          url: http://localhost:9200
-          index: app-logs-kafka
-#        prod:
-#          url: https://opensearch-prod:9200
-#          username: admin
-#          password: "${OS_PROD_PASSWORD:}"
-#          index: app-logs-*
+  # The metrics backend (agent.metrics.*) and the OpenSearch log connections (agent.mcp.os.*) are
+  # configured by an admin under Settings in the console, not here.
 
 
 management:
@@ -131,39 +104,9 @@ management:
           headers:
             authorization: "Bearer ${OTEL_COLLECTOR_AUTH_API_KEY}"
 
-kafka:
-  clusters:
-    # Both point at the docker-compose broker's EXTERNAL listener (localhost:9092), which
-    # requires SASL/PLAIN — see compose.yml's KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG
-    # for the full user list and config/kafka/init-acls.sh for what 'kafkatower' is allowed to do
-    # (broad read-only: Describe/DescribeConfigs/Read on every topic/group, Describe on
-    # cluster/transactional-ids — this app only inspects, it never produces/consumes/deletes).
-    nonprod:
-      bootstrap-servers: localhost:9092
-      security-protocol: SASL_PLAINTEXT
-      sasl:
-        mechanism: PLAIN
-        username: kafkatower
-        password: ${KAFKA_KAFKATOWER_PASSWORD:kafkatower-secret}
-    prod:
-      bootstrap-servers: localhost:9092
-      security-protocol: SASL_PLAINTEXT
-      sasl:
-        mechanism: PLAIN
-        username: kafkatower
-        password: ${KAFKA_KAFKATOWER_PASSWORD:kafkatower-secret}
-    # SSL/mTLS example:
-    # prod-cluster:
-    #   bootstrap-servers: broker1:9092,broker2:9092
-    #   security-protocol: SSL
-    #   ssl:
-    #     keystore-location: /etc/kafka/certs/client.p12
-    #     keystore-password: changeit
-    #     keystore-type: PKCS12
-    #     key-password: changeit
-    #     truststore-location: /etc/kafka/certs/truststore.p12
-    #     truststore-password: changeit
-    #     truststore-type: PKCS12
+# The Kafka clusters (kafka.clusters.*) are configured by an admin under Settings > Kafka in the
+# console: none, mTLS or SASL, with certificates referenced by file path on the server.
+
 
 app:
   security:

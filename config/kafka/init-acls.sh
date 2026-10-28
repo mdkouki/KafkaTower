@@ -7,7 +7,7 @@
 # Every non-superuser principal below gets exactly what it needs and nothing more:
 #   - kafkatower, akhq, kminion, kafka-exporter: read-only "observer" access (this app's own
 #     ACL registry, and every monitoring/UI tool, only ever inspects — never produces, consumes,
-#     or alters anything) — Describe/DescribeConfigs/Read on every topic and group, Describe on
+#     or alters anything) — Describe/DescribeConfigs/Read on every topic and group, Describe/DescribeConfigs on
 #     the cluster and on every transactional ID.
 #   - order-service, fulfillment-service, logistics-service: exactly the topics/groups compose.yml's DEMO_PRODUCES/DEMO_CONSUMES/
 #     DEMO_CONSUMER_GROUP declare for them, nothing else. fulfillment-service's "shipments.*" entry becomes a
@@ -36,7 +36,9 @@ grant_observer() {
   local principal="User:$1"
   acls --add --allow-principal "$principal" --operation Describe --operation DescribeConfigs --operation Read --topic '*'
   acls --add --allow-principal "$principal" --operation Describe --operation Read --group '*'
-  acls --add --allow-principal "$principal" --operation Describe --cluster
+  # DescribeConfigs on the cluster is what AdminClient.describeConfigs(BROKER) needs; without it
+  # broker-config lookups fail with ClusterAuthorizationException.
+  acls --add --allow-principal "$principal" --operation Describe --operation DescribeConfigs --cluster
   acls --add --allow-principal "$principal" --operation Describe --transactional-id '*'
 }
 

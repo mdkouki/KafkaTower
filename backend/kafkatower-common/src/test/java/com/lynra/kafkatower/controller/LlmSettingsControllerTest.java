@@ -18,7 +18,7 @@ class LlmSettingsControllerTest {
 
     private final LlmSettingsRepository repo = mock(LlmSettingsRepository.class);
     private final ApplicationRestarter restarter = mock(ApplicationRestarter.class);
-    private final LlmSettingsController controller = new LlmSettingsController(repo, restarter);
+    private final LlmSettingsController controller = new LlmSettingsController(repo, restarter, mock(com.lynra.kafkatower.config.LlmConnectionVerifier.class));
 
     private static LlmSettings settings(String key, String baseUrl, String model) {
         LlmSettings s = new LlmSettings();

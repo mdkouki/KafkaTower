@@ -5,12 +5,12 @@
   import { authUser, authMode, initAuth, logout } from './core/auth.js';
   import { pages } from './modules/pages.js';
   import FeedbackPanel from './core/FeedbackPanel.svelte';
-  import LlmSettingsPanel from './core/LlmSettingsPanel.svelte';
+  import SettingsPanel from './core/SettingsPanel.svelte';
   import Chatbot from './core/Chatbot.svelte';
   import Login from './core/Login.svelte';
 
   let showFeedbackPanel = false;
-  let showLlmSettings = false;
+  let showSettings = false;
 
   let menuItems = [];
   let selectedMenuKey = null;
@@ -107,15 +107,15 @@
         </button>
         <button
           class="footer-item"
-          class:active={showLlmSettings}
-          on:click={() => (showLlmSettings = true)}
-          aria-label="LLM settings"
+          class:active={showSettings}
+          on:click={() => (showSettings = true)}
+          aria-label="Settings"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/>
             <path d="M12 8v4l3 3"/>
           </svg>
-          LLM settings
+          Settings
         </button>
       {/if}
 
@@ -149,8 +149,8 @@
   <FeedbackPanel onClose={() => (showFeedbackPanel = false)} />
 {/if}
 
-{#if showLlmSettings}
-  <LlmSettingsPanel on:close={() => (showLlmSettings = false)} />
+{#if showSettings}
+  <SettingsPanel on:close={() => (showSettings = false)} />
 {/if}
 
 <style>

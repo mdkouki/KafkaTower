@@ -62,12 +62,22 @@ public class PromQlQueryTools {
 
     /** Cheap reachability probe: lists label names, which every Prometheus-compatible server serves. */
     public boolean ping() {
+        String error = probe();
+        if (error != null) {
+            log.warn("Metrics health check failed: {}", error);
+        }
+        return error == null;
+    }
+
+    /** Same probe as {@link #ping()}, returning the reason it failed, or null when the backend answers. */
+    public String probe() {
         try {
             JsonNode body = MAPPER.readTree(get("/api/v1/labels", ""));
-            return "success".equals(body.path("status").asText());
+            return "success".equals(body.path("status").asText())
+                    ? null : "Unexpected answer from " + baseUrl + ": " + body.path("error").asText("no success status");
         } catch (Exception e) {
-            log.warn("Metrics health check failed: {}", e.getMessage());
-            return false;
+            return e.getMessage() == null || e.getMessage().isBlank()
+                    ? "Connection failed (" + e.getClass().getSimpleName() + ")" : e.getMessage();
         }
     }
 

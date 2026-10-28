@@ -252,7 +252,10 @@ public class KafkaAdminConfig {
             this.jaasConfig = jaasConfig;
         }
 
-        /** Returns {@code jaasConfig} verbatim if set, else builds a PlainLoginModule config from username/password. */
+        /**
+         * Returns {@code jaasConfig} verbatim if set, else builds the login module config from
+         * username/password: PlainLoginModule for PLAIN, ScramLoginModule for SCRAM-SHA-*.
+         */
         String resolveJaasConfig() {
             if (jaasConfig != null && !jaasConfig.isBlank()) {
                 return jaasConfig;
@@ -260,8 +263,14 @@ public class KafkaAdminConfig {
             if (username == null || username.isBlank()) {
                 return null;
             }
-            return "org.apache.kafka.common.security.plain.PlainLoginModule required username=\""
-                    + username + "\" password=\"" + password + "\";";
+            String module = mechanism != null && mechanism.toUpperCase().startsWith("SCRAM")
+                    ? "org.apache.kafka.common.security.scram.ScramLoginModule"
+                    : "org.apache.kafka.common.security.plain.PlainLoginModule";
+            return module + " required username=\"" + escape(username) + "\" password=\"" + escape(password) + "\";";
+        }
+
+        private static String escape(String value) {
+            return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
         }
     }
 }

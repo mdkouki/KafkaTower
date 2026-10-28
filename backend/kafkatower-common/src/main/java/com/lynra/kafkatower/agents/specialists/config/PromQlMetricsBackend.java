@@ -17,24 +17,27 @@ import java.util.List;
 public class PromQlMetricsBackend implements MetricsBackend {
 
     private final PromQlQueryTools queryTools;
+    private final boolean configured;
 
     public PromQlMetricsBackend(
-            @Value("${agent.metrics.url}") String url,
+            @Value("${agent.metrics.url:}") String url,
             @Value("${agent.metrics.token:}") String token,
             @Value("${agent.metrics.username:}") String username,
             @Value("${agent.metrics.password:}") String password,
             @Value("${agent.metrics.tenant:}") String tenant) {
-        this.queryTools = new PromQlQueryTools(url, token, username, password, tenant);
+        this.configured = url != null && !url.isBlank();
+        this.queryTools = new PromQlQueryTools(url == null ? "" : url, token, username, password, tenant);
     }
 
     @Override
     public boolean isAvailable() {
-        return queryTools.ping();
+        return configured && queryTools.ping();
     }
 
     @Override
     public String unavailableMessage() {
-        return "The metrics service is currently unreachable.";
+        return configured ? "The metrics service is currently unreachable."
+                : "The metrics backend is not configured (an admin can set it under Settings > Metrics).";
     }
 
     @Override
