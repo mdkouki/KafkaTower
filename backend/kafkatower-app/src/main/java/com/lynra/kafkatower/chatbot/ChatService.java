@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.chatbot;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.core.Agent;
 import com.embabel.agent.core.AgentPlatform;
 import com.embabel.agent.core.AgentProcess;
@@ -20,6 +21,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@ConditionalOnAssistantEnabled
 @Service
 public class ChatService {
 

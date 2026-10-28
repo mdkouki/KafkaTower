@@ -5,13 +5,17 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,9 +59,13 @@ public class ToolResultCacheAspect {
         this.cache = Caffeine.newBuilder().maximumSize(maxSize).build();
     }
 
-    @Around("@annotation(cachedTool)")
-    public Object cacheToolResult(ProceedingJoinPoint joinPoint, CachedTool cachedTool) throws Throwable {
-        if (!enabled) {
+    // The annotation is looked up on the method rather than bound as an advice argument
+    // (@annotation(cachedTool)): that binding fails at runtime with "JoinPointMatch was NOT
+    // bound in invocation", so no @CachedTool call would ever have been cached.
+    @Around("@annotation(com.lynra.kafkatower.utils.CachedTool)")
+    public Object cacheToolResult(ProceedingJoinPoint joinPoint) throws Throwable {
+        CachedTool cachedTool = cachedToolOf(joinPoint);
+        if (!enabled || cachedTool == null) {
             return joinPoint.proceed();
         }
         String key = joinPoint.getSignature().toLongString() + Arrays.deepToString(joinPoint.getArgs());
@@ -100,6 +108,15 @@ public class ToolResultCacheAspect {
         } finally {
             inFlight.remove(key);
         }
+    }
+
+    private static CachedTool cachedToolOf(ProceedingJoinPoint joinPoint) {
+        Method method = ((MethodSignature) joinPoint.getSignature()).getMethod();
+        Object target = joinPoint.getTarget();
+        if (target != null) {
+            method = AopUtils.getMostSpecificMethod(method, target.getClass());
+        }
+        return AnnotationUtils.findAnnotation(method, CachedTool.class);
     }
 
     private static boolean isCacheable(String text) {

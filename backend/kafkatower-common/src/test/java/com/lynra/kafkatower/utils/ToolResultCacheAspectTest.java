@@ -1,6 +1,7 @@
 package com.lynra.kafkatower.utils;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 
 import java.util.concurrent.CountDownLatch;
@@ -126,6 +127,7 @@ class ToolResultCacheAspectTest {
     }
 
     @Test
+    @Timeout(10)
     void concurrentIdenticalCallsRunTheToolOnce() throws Exception {
         FakeTools target = new FakeTools();
         target.gate = new CountDownLatch(1);
@@ -134,7 +136,10 @@ class ToolResultCacheAspectTest {
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<String> a = pool.submit(() -> tools.read("c1", "t"));
             // Wait until the leader is inside the tool, then start the follower.
-            while (target.calls.get() == 0) Thread.sleep(5);
+            while (target.calls.get() == 0) {
+                if (a.isDone()) a.get(); // surfaces a leader failure instead of spinning forever
+                Thread.sleep(5);
+            }
             Future<String> b = pool.submit(() -> tools.read("c1", "t"));
             Thread.sleep(100);
             target.gate.countDown();

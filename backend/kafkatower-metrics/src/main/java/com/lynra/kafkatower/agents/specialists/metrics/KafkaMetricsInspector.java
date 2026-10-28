@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.specialists.metrics;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.AchievesGoal;
 import com.embabel.agent.api.annotation.Agent;
@@ -17,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 
+@ConditionalOnAssistantEnabled
 @Agent(description = "Answers historical time-series questions about Kafka metrics: " +
         "trends, throughput, consumer lag charts, capacity analysis, and comparisons over a time window. " +
         "Use this agent when the question asks for a chart, trend, or historical comparison.")

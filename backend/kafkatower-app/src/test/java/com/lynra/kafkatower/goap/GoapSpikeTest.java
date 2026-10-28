@@ -21,7 +21,20 @@ import static org.assertj.core.api.Assertions.assertThat;
  * and asserts on the planner's actual behavior. Not testing any production agent.
  */
 @SpringBootTest(classes = GoapSpikeTestApplication.class,
-        properties = "ECGPT_API_KEY=test-key-not-used-no-llm-calls-in-this-spike")
+        properties = {
+                // LLM configured as code (the settings-from-database post-processor stands down when
+                // this flag is set); no LLM call is ever made here.
+                "kafkatower.assistant.enabled=true",
+                "embabel.agent.platform.models.openai.api-key=test-key-not-used-no-llm-calls-in-this-spike",
+                "embabel.agent.platform.models.openai.base-url=http://localhost:1234",
+                "embabel.models.default-llm=mistral-medium-2508",
+                "embabel.agent.platform.observability.enabled=false",
+                // The default datasource is PostgreSQL; this test needs no persistence of its own.
+                "spring.datasource.url=jdbc:h2:mem:goapspiketestdb;DB_CLOSE_DELAY=-1",
+                "spring.datasource.driver-class-name=org.h2.Driver",
+                "spring.flyway.enabled=false",
+                "spring.jpa.hibernate.ddl-auto=create-drop"
+        })
 class GoapSpikeTest {
 
     @Autowired

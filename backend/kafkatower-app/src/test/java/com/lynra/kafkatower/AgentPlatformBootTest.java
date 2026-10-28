@@ -23,7 +23,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
-                "ECGPT_API_KEY=test-key-not-used-no-llm-calls-in-this-boot-test",
+                // The assistant is normally enabled from LLM settings saved in the database; here it is
+                // configured as code (the post-processor stands down when this flag is already set).
+                "kafkatower.assistant.enabled=true",
+                "embabel.agent.platform.models.openai.api-key=test-key-not-used-no-llm-calls-in-this-boot-test",
+                "embabel.agent.platform.models.openai.base-url=http://localhost:1234",
+                "embabel.models.default-llm=mistral-medium-2508",
+                "spring.ai.openai.api-key=test-key-not-used-no-llm-calls-in-this-boot-test",
+                "spring.ai.openai.base-url=http://localhost:1234",
+                "spring.ai.openai.chat.options.model=mistral-medium-2508",
                 "embabel.agent.platform.observability.enabled=false",
                 // Same override as application-test.yml, applied directly instead of via
                 // @ActiveProfiles("test") — see class Javadoc for why that profile name must be avoided.

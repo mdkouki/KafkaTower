@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.core.audit;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.event.AgentProcessEvent;
 import com.embabel.agent.api.event.AgentProcessPlanFormulatedEvent;
 import com.embabel.agent.api.event.AgenticEventListener;
@@ -31,6 +32,7 @@ import java.util.stream.Collectors;
  * already logs call-by-call. This listener exists so the process-level plan is visible too
  * (which agent/action was chosen for which goal, and when).
  */
+@ConditionalOnAssistantEnabled
 @Component
 public class AgentPlanLogger implements AgenticEventListener {
 

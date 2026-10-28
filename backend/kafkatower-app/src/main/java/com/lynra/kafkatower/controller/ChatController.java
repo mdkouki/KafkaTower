@@ -2,11 +2,14 @@ package com.lynra.kafkatower.controller;
 
 import com.lynra.kafkatower.chatbot.ChatRequest;
 import com.lynra.kafkatower.chatbot.ChatService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
 import reactor.core.scheduler.Schedulers;
@@ -18,14 +21,20 @@ import java.util.concurrent.atomic.AtomicReference;
 @RequestMapping("/api/chat")
 public class ChatController {
 
-    private final ChatService chatService;
+    // Absent while the assistant is disabled (no LLM settings saved yet) — see ConditionalOnAssistantEnabled.
+    private final ObjectProvider<ChatService> chatServiceProvider;
 
-    public ChatController(ChatService chatService) {
-        this.chatService = chatService;
+    public ChatController(ObjectProvider<ChatService> chatServiceProvider) {
+        this.chatServiceProvider = chatServiceProvider;
     }
 
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatRequest request) {
+        ChatService chatService = chatServiceProvider.getIfAvailable();
+        if (chatService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "The assistant is not configured. An admin can set the LLM in the settings.");
+        }
         // Worst case is up to 3 orchestration rounds, each potentially
         // calling several specialist sub-agents (their own multi-turn tool-calling LLM loops)
         // plus a completeness review — comfortably exceeds 120s under load.

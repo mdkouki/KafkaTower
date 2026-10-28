@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.chatbot;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.lynra.kafkatower.agents.core.root.ClassificationResult;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
@@ -21,6 +22,7 @@ import java.util.concurrent.RejectedExecutionException;
  * Deliberately a plain Spring AI {@link ChatClient} rather than an Embabel {@code Ai} — the
  * latter is bound to the running agent process and its thread, which this call must not touch.
  */
+@ConditionalOnAssistantEnabled
 @Component
 public class AsyncPromptClassifier {
 

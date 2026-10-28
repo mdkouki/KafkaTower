@@ -1,5 +1,5 @@
 <script>
-  import { afterUpdate } from 'svelte';
+  import { afterUpdate, onMount } from 'svelte';
   import { fade, fly, scale } from 'svelte/transition';
   import { motionParams } from './motion.js';
   import { readSseEvents } from './sse.js';
@@ -197,6 +197,16 @@
   };
 
   let isOpen = false;
+  // False while no admin has saved the LLM settings yet (the backend then runs without the assistant).
+  let assistantEnabled = true;
+  async function refreshAssistantStatus() {
+    try {
+      const res = await fetch('/api/assistant/status');
+      if (res.ok) assistantEnabled = (await res.json()).enabled;
+    } catch { /* keep the last known state */ }
+  }
+  onMount(refreshAssistantStatus);
+  $: if (isOpen) refreshAssistantStatus();
   let messages = [];
   let inputText = '';
   let isLoading = false;
@@ -484,7 +494,11 @@
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          <p>Ask me anything about your Kafka clusters, topics, consumer groups, or dependencies.</p>
+          {#if assistantEnabled}
+            <p>Ask me anything about your Kafka clusters, topics, consumer groups, or dependencies.</p>
+          {:else}
+            <p>The assistant is not configured yet. An admin can set the LLM (API key, base URL and model) in the LLM settings.</p>
+          {/if}
         </div>
       {:else}
         {#each messages as msg (msg.id)}
@@ -554,14 +568,14 @@
         class="chat-input"
         bind:value={inputText}
         on:keydown={handleKeydown}
-        placeholder="Ask about Kafka topics, groups, dependencies…"
+        placeholder={assistantEnabled ? 'Ask about Kafka topics, groups, dependencies…' : 'Assistant not configured'}
         rows="1"
-        disabled={isLoading}
+        disabled={isLoading || !assistantEnabled}
       ></textarea>
       <button
         class="send-btn"
         on:click={sendMessage}
-        disabled={!inputText.trim() || isLoading}
+        disabled={!inputText.trim() || isLoading || !assistantEnabled}
         aria-label="Send message"
       >
         {#if isLoading}
@@ -1057,6 +1071,7 @@
     border-color: var(--color-accent);
     box-shadow: 0 0 0 3px var(--color-accent-light);
     background: white;
+    color: #000;
   }
 
   .chat-input:disabled {

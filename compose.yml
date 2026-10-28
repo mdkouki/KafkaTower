@@ -1,5 +1,25 @@
 services:
 
+  # ── KafkaTower's own database (the standard setup; the app defaults match these values) ──
+  # Override with DB_URL / DB_USER / DB_PASSWORD, or run the app with the "h2" profile instead.
+  postgres:
+    image: postgres:17
+    container_name: kafkatower-postgres
+    hostname: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=kafkatower
+      - POSTGRES_USER=kafkatower
+      - POSTGRES_PASSWORD=kafkatower
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kafkatower -d kafkatower"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ── Kafka (KRaft, single-node, SASL_PLAINTEXT/PLAIN) ────────────────────────
   # Listener aliases are deliberately underscore-free (INTERNAL/EXTERNAL/CONTROLLER, not
   # e.g. SASL_PLAINTEXT) — the apache/kafka image maps KAFKA_* env vars to server.properties
@@ -425,5 +445,6 @@ services:
 
 
 volumes:
+  postgres_data:
   opensearch_data:
   phoenix_data:

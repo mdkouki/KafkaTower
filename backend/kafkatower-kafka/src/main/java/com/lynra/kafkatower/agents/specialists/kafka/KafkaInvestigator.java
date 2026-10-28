@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.specialists.kafka;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.AchievesGoal;
 import com.embabel.agent.api.annotation.Agent;
@@ -19,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 
+@ConditionalOnAssistantEnabled
 @Agent(description = "Handles live Kafka state investigation and active troubleshooting: " +
         "consumer group health, partition assignments, active lag spikes, and root-cause analysis. " +
         "Use this agent when the answer requires AdminClient or correlating live state with metrics. " +

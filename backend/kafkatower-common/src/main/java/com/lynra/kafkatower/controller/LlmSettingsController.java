@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.controller;
 
+import com.lynra.kafkatower.config.ApplicationRestarter;
 import com.lynra.kafkatower.model.LlmSettings;
 import com.lynra.kafkatower.repository.LlmSettingsRepository;
 import org.springframework.http.ResponseEntity;
@@ -14,9 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class LlmSettingsController {
 
     private final LlmSettingsRepository repo;
+    private final ApplicationRestarter restarter;
 
-    public LlmSettingsController(LlmSettingsRepository repo) {
+    public LlmSettingsController(LlmSettingsRepository repo, ApplicationRestarter restarter) {
         this.repo = repo;
+        this.restarter = restarter;
     }
 
     @GetMapping
@@ -34,6 +37,7 @@ public class LlmSettingsController {
     @PutMapping
     public ResponseEntity<SaveResponse> save(@RequestBody LlmSettingsRequest request) {
         LlmSettings settings = repo.findById(1L).orElseGet(LlmSettings::new);
+        String[] before = {settings.getApiKey(), settings.getBaseUrl(), settings.getModel()};
         if (request.apiKey() != null && !request.apiKey().isBlank()) {
             settings.setApiKey(request.apiKey().trim());
         }
@@ -44,7 +48,15 @@ public class LlmSettingsController {
             settings.setModel(request.model().trim());
         }
         repo.save(settings);
-        return ResponseEntity.ok(new SaveResponse("saved", "Restart the application for changes to take effect."));
+
+        boolean changed = !java.util.Arrays.equals(before,
+                new String[]{settings.getApiKey(), settings.getBaseUrl(), settings.getModel()});
+        if (!changed) {
+            return ResponseEntity.ok(new SaveResponse("saved", "No change.", false));
+        }
+        restarter.restart();
+        return ResponseEntity.ok(new SaveResponse("saved",
+                "Applying the new settings: the application restarts and is back in a few seconds.", true));
     }
 
     private String maskKey(String key) {
@@ -53,7 +65,7 @@ public class LlmSettingsController {
         return "*".repeat(key.length() - 4) + key.substring(key.length() - 4);
     }
 
-    record LlmSettingsRequest(String apiKey, String baseUrl, String model) {}
+    public record LlmSettingsRequest(String apiKey, String baseUrl, String model) {}
     record LlmSettingsResponse(boolean apiKeySet, String apiKeyMasked, String baseUrl, String model) {}
-    record SaveResponse(String status, String note) {}
+    record SaveResponse(String status, String note, boolean restarting) {}
 }

@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.specialists.log;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.AchievesGoal;
 import com.embabel.agent.api.annotation.Agent;
@@ -37,6 +38,7 @@ import java.util.Set;
 // registration is undefined, so this agent's own presence could vary by classpath scan order.
 // The property condition is deterministic and matches what the registry itself is keyed on.
 @ConditionalOnProperty(prefix = "agent.mcp.os", name = "enabled", havingValue = "true")
+@ConditionalOnAssistantEnabled
 @Agent(description = "Queries OpenSearch logs for anomalies, exceptions, and distributed traces. " +
         "Use this agent when the question requires log correlation or trace analysis.")
 public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {

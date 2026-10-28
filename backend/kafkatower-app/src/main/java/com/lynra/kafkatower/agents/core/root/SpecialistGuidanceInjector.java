@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.core.root;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.utils.SkillLoader;
 import org.springframework.stereotype.Component;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
  * sets its base prompt — before it can hand this constructor the list, so there's no ordering
  * race to guard against here.
  */
+@ConditionalOnAssistantEnabled
 @Component
 public class SpecialistGuidanceInjector {
 

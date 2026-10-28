@@ -1,13 +1,18 @@
 server:
   port: 8089
+  error:
+    include-message: always
   compression:
     enabled: true
     mime-types: application/json,application/javascript,text/css,text/html
     min-response-size: 2048
 
 embabel:
-  models:
-    default-llm: 'mistral-medium-2508'
+  # The LLM (API key, base URL, model) is not configured here: an admin sets it in the UI, it is
+  # stored in the database and applied by LlmSettingsEnvironmentPostProcessor, which also decides
+  # whether Embabel and the assistant run at all. To configure it as code instead, set
+  # kafkatower.assistant.enabled=true plus embabel.agent.platform.models.openai.{api-key,base-url},
+  # embabel.models.default-llm and the matching spring.ai.openai.* properties.
   agent:
     platform:
       # Run the tool calls an LLM emits in the same turn concurrently (e.g. askMetrics + askLogs, or
@@ -20,10 +25,6 @@ embabel:
           per-tool-timeout: 300s
           batch-timeout: 330s
           executor-type: VIRTUAL
-      models:
-        openai:
-          api-key: ${ECGPT_API_KEY}
-          base-url: http://localhost:1234
       observability:
         enabled: true
         service-name: kafkatower
@@ -41,17 +42,16 @@ spring:
     resources:
       static-locations: classpath:/static/
       add-mappings: true
+  # PostgreSQL by default; activate the "h2" profile for a single-node setup without a database server.
   datasource:
-    url: jdbc:h2:file:./kafkatower-db
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/kafkatower}
+    username: ${DB_USER:kafkatower}
+    password: ${DB_PASSWORD:kafkatower}
   flyway:
     enabled: true
     locations: classpath:db/migration/{vendor}
-    # baseline-on-migrate: true when upgrading an existing H2 instance that was managed by ddl-auto.
+    # baseline-on-migrate: true when upgrading an existing instance that was managed by ddl-auto.
     # Flyway will mark it as at V1 baseline and only apply new migrations (V2+).
-    # Set to false (or omit) for a fresh PostgreSQL install so V1 runs in full.
     baseline-on-migrate: true
     baseline-version: 1
 
@@ -59,22 +59,10 @@ spring:
     hibernate:
       ddl-auto: none
     show-sql: false
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
 
   servlet:
     multipart:
       max-file-size: 10MB
-
-  ai:
-    openai:
-      api-key: ${ECGPT_API_KEY}
-      base-url: http://localhost:1234
-      chat:
-        options:
-          model: mistral-medium-2508
 
 agent:
   orchestration:

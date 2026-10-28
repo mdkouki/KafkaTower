@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.core.root;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.EmbabelComponent;
 import com.embabel.agent.api.annotation.LlmTool;
 import com.embabel.agent.core.Agent;
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
  * <p>
  * Needs to give this bean per-request state? See {@link EnrichedSubAgentTools} for the pattern.
  */
+@ConditionalOnAssistantEnabled
 @Service
 @EmbabelComponent
 public class SubAgentTools {

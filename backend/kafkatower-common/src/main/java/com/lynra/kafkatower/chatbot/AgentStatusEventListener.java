@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.chatbot;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.event.AgentProcessCreationEvent;
 import com.embabel.agent.api.event.AgentProcessEvent;
 import com.embabel.agent.api.event.AgenticEventListener;
@@ -23,6 +24,7 @@ import java.util.function.Consumer;
  * the calling thread, so the thread that registered a sink here is the same thread this
  * listener's callback fires on.
  */
+@ConditionalOnAssistantEnabled
 @Component
 public class AgentStatusEventListener implements AgenticEventListener {
 

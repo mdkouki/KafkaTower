@@ -16,6 +16,7 @@
   let saving = false;
   let error = null;
   let successNote = null;
+  let restarting = false;
 
   onMount(async () => {
     try {
@@ -32,6 +33,28 @@
     }
   });
 
+  // The backend restarts its Spring context to apply the settings. The public start page is
+  // unreachable while it is down; once it answers again, reload (sessions do not survive a restart).
+  async function waitForRestart() {
+    restarting = true;
+    let wentDown = false;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 120000) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const res = await fetch('/', { cache: 'no-store' });
+        if (res.ok && (wentDown || Date.now() - startedAt > 8000)) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        wentDown = true;
+      }
+    }
+    restarting = false;
+    error = 'The application did not come back within 2 minutes. Check the server logs.';
+  }
+
   async function handleSave() {
     saving = true;
     error = null;
@@ -44,9 +67,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || `HTTP ${res.status}`);
       const data = await res.json();
       successNote = data.note;
+      if (data.restarting) waitForRestart();
       if (body.apiKey) { apiKey = ''; apiKeyMasked = '****' + body.apiKey.slice(-4); }
     } catch (e) {
       error = e.message;
@@ -78,7 +102,7 @@
       </div>
     {:else}
       <div class="panel-body">
-        <p class="section-hint">Configure the LLM endpoint used by the AI agents. Changes take effect after restarting the application.</p>
+        <p class="section-hint">Configure the LLM endpoint used by the AI agents. Saving restarts the application context (a few seconds) to apply the change.</p>
 
         <div class="field">
           <label for="llm-api-key">API Key</label>
@@ -109,7 +133,7 @@
           <input
             id="llm-model"
             type="text"
-            placeholder="gpt-4o"
+            placeholder="mistral-medium-2508"
             bind:value={model}
           />
         </div>
@@ -122,8 +146,8 @@
         {/if}
 
         <div class="actions">
-          <button class="btn-save" on:click={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+          <button class="btn-save" on:click={handleSave} disabled={saving || restarting}>
+            {restarting ? 'Restarting…' : saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>

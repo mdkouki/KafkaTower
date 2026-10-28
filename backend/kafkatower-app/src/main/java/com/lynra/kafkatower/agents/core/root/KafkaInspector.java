@@ -1,5 +1,6 @@
 package com.lynra.kafkatower.agents.core.root;
 
+import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.AchievesGoal;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.Agent;
@@ -20,6 +21,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
+@ConditionalOnAssistantEnabled
 @Agent(description = "Root Kafka assistant orchestrator. Analyzes every question to decide, " +
         "on its own, which specialist(s) to consult — KafkaMetricsInspector (historical metrics), KafkaInvestigator (live " +
         "state), or KafkaLogInspector (logs/traces) — calling one, several, or none of them, " +

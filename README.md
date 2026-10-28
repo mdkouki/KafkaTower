@@ -98,11 +98,12 @@ The frontend is Svelte (`frontend/`), split into a core and one module per speci
 - Maven 3.9+ (Node is downloaded automatically during the build)
 - Docker, for the local demo environment
 - A Prometheus-compatible metrics store for the metrics specialist (VictoriaMetrics in the demo; set `agent.metrics.url` to point elsewhere)
-- An LLM API key for the assistant (models are configured in `application.yml` and `models/openai-models.yml`)
+- PostgreSQL for KafkaTower's own data (the `postgres` service in `compose.yml` matches the defaults), or the `h2` profile for a single-node setup with no database server
+- An LLM endpoint for the assistant (OpenAI-compatible: API key, base URL and model). It is configured in the UI, see step 5
 
 ### 1. Start the demo environment (optional)
 
-`compose.yml` brings up Kafka with demo applications, AKHQ, VictoriaMetrics, OpenSearch with Fluent Bit, an OpenTelemetry collector and Phoenix, so every specialist has something to query:
+`compose.yml` brings up PostgreSQL, Kafka with demo applications, AKHQ, VictoriaMetrics, OpenSearch with Fluent Bit, an OpenTelemetry collector and Phoenix, so every specialist has something to query:
 
 ```bash
 docker compose up -d
@@ -124,6 +125,14 @@ Prefer Prometheus to VictoriaMetrics? `docker compose --profile prometheus up -d
 java -jar backend/kafkatower-app/target/kafkatower-app-1.0.0-SNAPSHOT.jar
 ```
 
+Without PostgreSQL, run the file-based H2 database next to the jar instead:
+
+```bash
+java -jar backend/kafkatower-app/target/kafkatower-app-1.0.0-SNAPSHOT.jar --spring.profiles.active=h2
+```
+
+The database connection can be overridden with `DB_URL`, `DB_USER` and `DB_PASSWORD`.
+
 ### 4. Open
 
 Go to **http://localhost:8089** and sign in.
@@ -134,6 +143,10 @@ Go to **http://localhost:8089** and sign in.
 | `user`   | `user123`  | User  |
 
 These are development defaults. Change them before exposing the app to anyone.
+
+### 5. Turn on the assistant
+
+The console works without any LLM. The assistant, and the agent platform behind it, start only once an admin has entered an **API key, base URL and model** under *LLM settings*. Saving applies them right away: the application restarts its Spring context (a few seconds, you sign in again), with no process restart. Until then the chat shows that the assistant is not configured.
 
 ---
 
