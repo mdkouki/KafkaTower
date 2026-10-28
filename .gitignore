@@ -1,6 +1,5 @@
 /.idea/
 /.claude/
-/backend/target/
 /backend/kafkatower-app/src/main/resources/static/
 /demo-app/target/
 /frontend/node/
@@ -11,4 +10,4 @@
 /.remember/
 /graphify-out/
 .DS_Store
-/backend/kafkatower-app/target/
+/backend/*/target/
