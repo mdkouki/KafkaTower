@@ -11,3 +11,4 @@
 /graphify-out/
 .DS_Store
 /backend/*/target/
+/backend/kafkatower-common/target/
