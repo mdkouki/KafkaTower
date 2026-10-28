@@ -9,8 +9,7 @@ import com.embabel.agent.api.tool.progressive.UnfoldingTool;
 import com.lynra.kafkatower.agents.core.audit.LlmCallTimer;
 import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
-import com.lynra.kafkatower.agents.specialists.config.McpHealthChecker;
-import com.lynra.kafkatower.agents.specialists.config.VmMcpClientProvider;
+import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
 import com.lynra.kafkatower.tools.KafkaAdminClientTools;
 import com.lynra.kafkatower.tools.MetricsSkillTools;
@@ -30,21 +29,18 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
 
     private final KafkaAdminClientTools kafkaAdminClientTools;
     private final MetricsSkillTools metricsSkillTools;
-    private final VmMcpClientProvider mcpClientProvider;
-    private final McpHealthChecker mcpHealthChecker;
+    private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
     private String systemPrompt;
 
     public KafkaInvestigator(KafkaAdminClientTools kafkaAdminClientTools,
                              MetricsSkillTools metricsSkillTools,
-                             VmMcpClientProvider mcpClientProvider,
-                             McpHealthChecker mcpHealthChecker,
+                             MetricsBackend metricsBackend,
                              @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.kafkaAdminClientTools = kafkaAdminClientTools;
         this.metricsSkillTools = metricsSkillTools;
-        this.mcpClientProvider = mcpClientProvider;
-        this.mcpHealthChecker = mcpHealthChecker;
+        this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
 
@@ -107,7 +103,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
      * KAFKA_INVESTIGATOR.md) fits in one action instead of needing a separate re-entry action.
      */
     @Action(description = """
-            Correlate the AdminSnapshot findings against VictoriaMetrics trends: rates, growth,
+            Correlate the AdminSnapshot findings against metric trends: rates, growth,
             anomaly timing. May re-enter AdminClient tools to narrow into the worst-N entities
             metrics surface (Entity-Scale Discipline). Runs after gatherAdminState.
             """)
@@ -129,25 +125,21 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 """.formatted(adminSnapshot.summary());
 
         PromptRunner runner;
-        if (mcpHealthChecker.isAvailable()) {
-            UnfoldingTool vmTools = mcpClientProvider.unfoldingWithRetry(
-                    "vm-investigation",
-                    "Invoke this to reveal the VictoriaMetrics query tools (metrics, query, query_range, "
-                            + "labels, label_values) for correlating live Kafka state with metric trends. "
-                            + "You MUST call this before you can query metrics.",
-                    VmMcpClientProvider.standardChildUsageNotes("vm-investigation",
-                            "Use `metrics` for discovery, then `query` (instant) or `query_range` (trend) "
-                                    + "to correlate against the admin snapshot above.")
-            );
+        if (metricsBackend.isAvailable()) {
+            UnfoldingTool metricsTools = metricsBackend.queryTools(
+                    "metrics-investigation",
+                    "correlating live Kafka state with metric trends",
+                    "Use `metrics` for discovery, then `query` (instant) or `query_range` (trend) "
+                            + "to correlate against the admin snapshot above.");
             runner = ai.withAutoLlm()
                     .withSystemPrompt(base)
                     .withToolObject(kafkaAdminClientTools)
                     .withToolObject(metricsSkillTools)
-                    .withTool(vmTools);
+                    .withTool(metricsTools);
         } else {
-            // MCP down — still correlate using AdminClient-only re-entry, note the limitation
+            // Metrics store down — still correlate using AdminClient-only re-entry, note the limitation
             runner = ai.withAutoLlm()
-                    .withSystemPrompt(withMcpUnavailableNote(base, mcpHealthChecker.unavailableMessage()))
+                    .withSystemPrompt(withMetricsUnavailableNote(base, metricsBackend.unavailableMessage()))
                     .withToolObject(kafkaAdminClientTools)
                     .withToolObject(metricsSkillTools);
         }
@@ -163,8 +155,8 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         return new MetricsCorrelation(response);
     }
 
-    /** Extracted from {@link #correlateMetrics}'s MCP-down branch for direct unit testing. */
-    static String withMcpUnavailableNote(String base, String unavailableMessage) {
+    /** Extracted from {@link #correlateMetrics}'s metrics-down branch for direct unit testing. */
+    static String withMetricsUnavailableNote(String base, String unavailableMessage) {
         return base + "\n\nNOTE: " + unavailableMessage +
                 " Do not attempt to query metrics; note this limitation in your summary.";
     }

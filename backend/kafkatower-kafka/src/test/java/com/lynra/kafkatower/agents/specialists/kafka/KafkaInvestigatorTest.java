@@ -7,20 +7,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KafkaInvestigatorTest {
 
     @Test
-    void withMcpUnavailableNoteAppendsMessageAndInstructionToTheBasePrompt() {
-        String enriched = KafkaInvestigator.withMcpUnavailableNote("base prompt", "VictoriaMetrics MCP is down");
+    void withMetricsUnavailableNoteAppendsMessageAndInstructionToTheBasePrompt() {
+        String enriched = KafkaInvestigator.withMetricsUnavailableNote("base prompt", "The metrics service is down");
 
         assertThat(enriched)
                 .startsWith("base prompt")
-                .contains("VictoriaMetrics MCP is down")
+                .contains("The metrics service is down")
                 .contains("Do not attempt to query metrics");
     }
 
     @Test
-    void withMcpUnavailableNotePreservesTheBasePromptUnchangedAsAPrefix() {
+    void withMetricsUnavailableNotePreservesTheBasePromptUnchangedAsAPrefix() {
         String base = "You are running the SECOND step of a two-step investigation...";
 
-        String enriched = KafkaInvestigator.withMcpUnavailableNote(base, "unavailable");
+        String enriched = KafkaInvestigator.withMetricsUnavailableNote(base, "unavailable");
 
         assertThat(enriched).startsWith(base);
     }

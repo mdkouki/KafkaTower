@@ -69,10 +69,6 @@ spring:
       max-file-size: 10MB
 
   ai:
-    mcp:
-      client:
-        enabled: false   # client created manually in AgentMcpConfig (Spring AI SSE config has no header support)
-
     openai:
       api-key: ${ECGPT_API_KEY}
       base-url: http://localhost:1234
@@ -89,15 +85,17 @@ agent:
     # Any LLM call (classification, draft, completeness-check, or a specialist's own call)
     # slower than this logs a warning — see SlowLlmCallLogger.
     slow-call-warning-ms: 15000
+  metrics:
+    # Time-series store behind the metrics tools (KafkaMetricsInspector, KafkaInvestigator),
+    # queried directly over the Prometheus-compatible HTTP API: VictoriaMetrics (default
+    # port 8428), Prometheus (9090), Thanos, Mimir... For VictoriaMetrics cluster, include
+    # the tenant path in the URL, e.g. http://vmselect:8481/select/0/prometheus
+    url: http://localhost:8428
+    token: ""      # optional: Bearer token
+    username: ""   # optional: HTTP basic auth (ignored when a token is set)
+    password: ""
+    tenant: ""     # optional: X-Scope-OrgID for multi-tenant Mimir/Cortex/Thanos
   mcp:
-    vm-url: http://localhost:8083
-    vm-token: ""    # optional: Bearer token for secured VictoriaMetrics
-    vm-tenant: ""   # optional: X-Scope-OrgID for multi-tenant VictoriaMetrics
-    # Transport: sse (GET /sse + POST /message — session dies with the SSE stream)
-    # or streamable (POST /mcp — session id in Mcp-Session-Id header; use behind
-    # load balancers/proxies; requires MCP_SERVER_MODE=http on the vm-mcp server)
-    vm-transport: sse
-
     # OpenSearch (KafkaLogInspector) — talks directly to OpenSearch's REST API on each
     # cluster's own host:port, authenticating with HTTP basic auth. Used instead of
     # OpenSearch's native MCP server because the OpenSearch version deployed here does

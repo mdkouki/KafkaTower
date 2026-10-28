@@ -2,46 +2,91 @@
 
 # KafkaTower
 
-**One calm console for everything happening on your Kafka clusters.**
+**One calm console for everything happening on your Kafka clusters, with an AI assistant that investigates for you.**
 
-See who can touch what, which topics are alive, and whether your consumers are keeping up. Ask an AI assistant when you'd rather just ask.
+See who can touch what, which topics are alive and whether your consumers keep up. Or just ask: a team of specialist agents queries live cluster state, historical metrics and logs, then cross-checks its own answer before replying.
 
-![KafkaTower login](docs/screenshots/01-login.png)
+![KafkaTower assistant](docs/screenshots/06-assistant.png)
 
 </div>
 
 ---
 
-## What it does
+## The assistant: an agent team, not a chatbot
+
+Ask a question in plain language ("why is `orders-consumer` lagging since 14:00?"). A root agent decides which specialists to consult, in any order, chaining their findings when a question needs it. For example, it narrows a timeframe with metrics, then searches the logs inside that window.
+
+```mermaid
+flowchart TD
+    Q[Your question] --> R[KafkaInspector<br/>root orchestrator]
+    R --> K[KafkaInvestigator<br/>live cluster state]
+    R --> M[KafkaMetricsInspector<br/>historical metrics]
+    R --> L[KafkaLogInspector<br/>logs and traces]
+    K --> A[Draft answer]
+    M --> A
+    L --> A
+    A --> C{Completeness<br/>review}
+    C -- gap found --> R
+    C -- complete --> G[Secret-leak guardrail] --> Out[Answer, streamed to the chat]
+```
+
+Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declares goals and actions, and its behaviour is steered by markdown "skills" in `src/main/resources/skills/`.
+
+### The specialists and their tools
+
+| Agent | Looks at | Tools |
+|-------|----------|-------|
+| **KafkaInvestigator** | Live cluster state | 17 Kafka AdminClient tools: brokers, cluster, topics and configs, partition offsets, consumer groups and lag, ACLs per principal or topic, client quotas |
+| **KafkaMetricsInspector** | Historical time series from any Prometheus-compatible store ([VictoriaMetrics](https://victoriametrics.com/), [Prometheus](https://prometheus.io/), Thanos, Mimir) | `metrics`, `query`, `query_range`, `labels`, `label_values` over the PromQL HTTP API, plus a metrics catalog (Kafka core and extended, KMinion) and playbooks for brokers, topics, consumer groups, principals, cluster health and known failure patterns |
+| **KafkaLogInspector** | Logs and traces ([OpenSearch](https://opensearch.org/)) | `search_documents`, `aggregate_documents`, `get_document` |
+
+All tools are read-only. Live-state results are cached for 15–30 s so a multi-step investigation doesn't hammer the brokers.
+
+### Built to be trusted
+
+- **Independent completeness review:** every draft is checked for gaps and refined with further tool calls, for at most 2 rounds (`agent.orchestration.max-rounds`).
+- **Secret-leak guardrail:** answers containing bearer tokens, API keys, passwords or PEM private keys are rejected.
+- **Untrusted tool output:** specialists are instructed to treat data returned by tools (log lines, configs) as data, never as instructions.
+- **Auditable:** each tool call and LLM call is logged with timing, slow calls are flagged, and traces go to an OpenTelemetry collector (viewable in Phoenix).
+- **Live progress:** the chat streams the agent's phases and tokens as it works.
+
+---
+
+## The console
 
 ### Registry: who can do what
 
-Pick any application identity and see, at a glance, which topics it consumes and produces, which consumer groups it owns, and which transactional IDs it holds. Literal and prefixed grants are labelled, and live group state is shown next to them.
-
-![Registry](docs/screenshots/02-registry.png)
+Pick any application identity and see which topics it consumes and produces, the consumer groups it owns and the transactional IDs it holds. Literal and prefixed grants are labelled, with live group state next to them. A **Dependencies** tab draws the principal's relationships as a graph.
 
 ![Registry consumer groups](docs/screenshots/03-registry-groups.png)
 
 ### Topics: what exists and who uses it
 
-Browse every topic in the cluster with its properties, its producers and its consumers.
+Browse every topic with its properties, producers and consumers, check consumer-group **lag**, and (as an admin) search the **content** of a topic live. JSON, Avro and protobuf payloads are decoded and streamed back as they match.
 
 ![Topics](docs/screenshots/04-topics.png)
-
-Jump to **Groups & lag** to see whether each consumer group is stable and how far behind it is.
-
-![Topic lag](docs/screenshots/05-topic-lag.png)
-
-### Assistant: just ask
-
-Not in the mood to click around? Ask the built-in assistant about your clusters, topics, consumer groups or application dependencies.
-
-![Assistant](docs/screenshots/06-assistant.png)
 
 ### And also
 
 - **Multiple clusters:** switch between them from the header.
-- **Sign-in:** the console is protected by a login.
+- **Sign-in with roles:** content search is restricted to admins.
+
+---
+
+## Architecture
+
+A Maven reactor of six modules; the app wires the specialists in, and each one contributes its own tools, skills and frontend tab.
+
+| Module | Role |
+|--------|------|
+| `kafkatower-app` | Spring Boot app, root agent, chat API, serves the frontend |
+| `kafkatower-common` | Security, shared agent plumbing: audit, guardrails, streaming, the `MetricsBackend` PromQL client |
+| `kafkatower-kafka` | `KafkaInvestigator` and the AdminClient tools |
+| `kafkatower-metrics` | `KafkaMetricsInspector`, metrics catalog and playbooks |
+| `kafkatower-log` | `KafkaLogInspector` and the OpenSearch tools |
+| `kafkatower-registry` | ACL registry, dependency graph, topic content search (Flyway-managed DB) |
+
+The frontend is Svelte (`frontend/`), split into a core and one module per specialist.
 
 ---
 
@@ -51,15 +96,19 @@ Not in the mood to click around? Ask the built-in assistant about your clusters,
 
 - Java 21
 - Maven 3.9+ (Node is downloaded automatically during the build)
-- Docker, if you want the local demo environment
+- Docker, for the local demo environment
+- A Prometheus-compatible metrics store for the metrics specialist (VictoriaMetrics in the demo; set `agent.metrics.url` to point elsewhere)
+- An LLM API key for the assistant (models are configured in `application.yml` and `models/openai-models.yml`)
 
 ### 1. Start the demo environment (optional)
 
-A local Kafka broker, a few demo applications and a Kafka UI:
+`compose.yml` brings up Kafka with demo applications, AKHQ, VictoriaMetrics, OpenSearch with Fluent Bit, an OpenTelemetry collector and Phoenix, so every specialist has something to query:
 
 ```bash
 docker compose up -d
 ```
+
+Prefer Prometheus to VictoriaMetrics? `docker compose --profile prometheus up -d prometheus`, then start the app with `AGENT_METRICS_URL=http://localhost:9090`.
 
 ### 2. Build
 

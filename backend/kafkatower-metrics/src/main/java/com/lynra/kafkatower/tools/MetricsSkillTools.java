@@ -67,7 +67,7 @@ public class MetricsSkillTools {
 
     @LlmTool(description = """
             Fetch a category of the Kafka metrics catalog — the authoritative list of every
-            confirmed metric name available in this VictoriaMetrics environment. Do not use a
+            confirmed metric name available in this metrics environment. Do not use a
             metric name that isn't listed in the catalog; fetch the relevant category first.
             Parameter category, one of:
             - kminion: consumer group lag/state/offsets, topic size/HWM, broker info/disk/traffic,

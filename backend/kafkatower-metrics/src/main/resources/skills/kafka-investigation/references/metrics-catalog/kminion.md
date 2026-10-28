@@ -1,6 +1,6 @@
 # Kafka Metrics Catalog — KMinion
 
-All metric names confirmed available in this VictoriaMetrics environment. `kminion_*` entries
+All metric names confirmed available in this metrics environment. `kminion_*` entries
 are live-verified. (Cluster-label and no-guessing-names rules are in your system prompt, not
 repeated per category here.)
 

@@ -25,7 +25,7 @@ an actual issue (or an explicit ask to dig into one) is.
 | Source | Purpose |
 |--------|---------|
 | Kafka Admin Client tools | Current ground truth — live state right now |
-| VictoriaMetrics MCP | Historical context — trends, rates, anomaly timing |
+| Metrics tools (`metrics`, `query`, `query_range`, ...) | Historical context — trends, rates, anomaly timing |
 
 ---
 
@@ -41,7 +41,7 @@ meaningful once you know current ground truth:
 3. **Metric discovery** → confirm metric names exist before querying
 4. **Targeted metric queries** → only answer the questions the admin findings raised
 
-Never query VictoriaMetrics before running the admin tools.
+Never query metrics before running the admin tools.
 
 ---
 
@@ -138,7 +138,7 @@ small:
 - **Investigation playbooks** (step-by-step PromQL for each scope, ready-to-use patterns, failure
   runbooks) — `getInvestigationPlaybook(scope)`, see the scope table above.
 - **Metrics Catalog** (the authoritative list of every confirmed metric name in this
-  VictoriaMetrics environment — do not use a name not listed there) — `getMetricsCatalog(category)`,
+  metrics environment — do not use a name not listed there) — `getMetricsCatalog(category)`,
   categories `kminion` (most common), `kafka-core` (error rate, controller, replication),
   `kafka-extended` (consumer client-side, quotas, per-topic usage).
 

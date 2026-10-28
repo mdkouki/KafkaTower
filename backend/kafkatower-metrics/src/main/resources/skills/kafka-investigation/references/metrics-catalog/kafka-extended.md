@@ -7,10 +7,10 @@ controller, replica manager, partition topology); come here for the less common 
 here.)
 
 > **Verification status:** these `kafka_*` (JMX-exporter-derived) entries are NOT currently
-> verifiable against a live instance — the local/dev VictoriaMetrics backend exposes zero
+> verifiable against a live instance — the local/dev metrics backend exposes zero
 > `kafka_*` series right now. Treat any name below as provisional until confirmed with
 > `label_values(__name__)` filtered on `kafka_` against the target cluster's real
-> VictoriaMetrics instance.
+> metrics store.
 
 ---
 

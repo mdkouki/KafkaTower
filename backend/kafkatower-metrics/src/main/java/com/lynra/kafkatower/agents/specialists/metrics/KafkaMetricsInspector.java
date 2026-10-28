@@ -8,8 +8,7 @@ import com.embabel.agent.api.tool.progressive.UnfoldingTool;
 import com.lynra.kafkatower.agents.core.audit.LlmCallTimer;
 import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
-import com.lynra.kafkatower.agents.specialists.config.McpHealthChecker;
-import com.lynra.kafkatower.agents.specialists.config.VmMcpClientProvider;
+import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
 import com.lynra.kafkatower.tools.MetricsSkillTools;
 import com.lynra.kafkatower.utils.SkillLoader;
@@ -26,19 +25,16 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     private static final Logger log = LoggerFactory.getLogger(KafkaMetricsInspector.class);
 
     private final MetricsSkillTools metricsSkillTools;
-    private final VmMcpClientProvider mcpClientProvider;
-    private final McpHealthChecker mcpHealthChecker;
+    private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
     private String systemPrompt;
 
     public KafkaMetricsInspector(MetricsSkillTools metricsSkillTools,
-                                  VmMcpClientProvider mcpClientProvider,
-                                  McpHealthChecker mcpHealthChecker,
+                                  MetricsBackend metricsBackend,
                                   @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.metricsSkillTools = metricsSkillTools;
-        this.mcpClientProvider = mcpClientProvider;
-        this.mcpHealthChecker = mcpHealthChecker;
+        this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
 
@@ -64,25 +60,21 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
 
     @AchievesGoal(description = "Kafka metrics question answered")
     @Action(description = """
-            Answer a historical time-series question about Kafka using VictoriaMetrics.
+            Answer a historical time-series question about Kafka from the metrics store.
             Covers: consumer lag trends, broker throughput, partition health over time,
             capacity analysis, and metric comparisons across a time window.
             The answer is derived from time-series data, not live broker state.
             """)
     public MetricsAnswer answer(MetricsQuestion question, Ai ai) {
-        if (!mcpHealthChecker.isAvailable()) {
-            return new MetricsAnswer(mcpHealthChecker.unavailableMessage());
+        if (!metricsBackend.isAvailable()) {
+            return new MetricsAnswer(metricsBackend.unavailableMessage());
         }
-        UnfoldingTool vmTools = mcpClientProvider.unfoldingWithRetry(
-                "vm-metrics",
-                "Invoke this to reveal the VictoriaMetrics query tools (metrics, query, query_range, "
-                        + "labels, label_values) for Kafka time-series data. You MUST call this before "
-                        + "you can query metrics.",
-                VmMcpClientProvider.standardChildUsageNotes("vm-metrics",
-                        "Start with `metrics` (discovery, at most once) using the narrowest pattern for "
-                                + "the question, then `query` (instant, default) or `query_range` (only for "
-                                + "an explicit trend/history request), per the workflow in your system prompt.")
-        );
+        UnfoldingTool metricsTools = metricsBackend.queryTools(
+                "metrics-query",
+                "Kafka time-series data",
+                "Start with `metrics` (discovery, at most once) using the narrowest pattern for "
+                        + "the question, then `query` (instant, default) or `query_range` (only for "
+                        + "an explicit trend/history request), per the workflow in your system prompt.");
         // Non-streaming on purpose: the streaming call path (StreamingLlmOperationsImpl)
         // resolves its tool list once via ToolResolutionHelper and hands it to the raw LLM
         // stream — it never re-evaluates ToolInjectionStrategy between rounds. UnfoldingTool's
@@ -95,7 +87,7 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         String response = LlmCallTimer.timed(log, "metrics answer", slowCallThresholdMs, () ->
                 ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt)
-                        .withTool(vmTools)
+                        .withTool(metricsTools)
                         .withToolObject(metricsSkillTools)
                         .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)

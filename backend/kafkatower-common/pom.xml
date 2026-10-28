@@ -15,8 +15,7 @@
     <name>KafkaTower - Common</name>
 
     <!-- Cross-domain infra: security, config, utils, chatbot support, LLM settings, prompt
-         analytics, agent audit/guardrails/streaming, the Specialist interface, and the MCP
-         client plumbing (VmMcpClientProvider/McpHealthChecker/ReconnectingMcpTool) shared by
-         the kafka and metrics domains. Depends on no other domain module — everyone else
+         analytics, agent audit/guardrails/streaming, the Specialist interface, and the MetricsBackend (PromQL over HTTP)
+         shared by the kafka and metrics domains. Depends on no other domain module — everyone else
          depends on this. -->
 </project>

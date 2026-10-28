@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 /**
  * Fails validation if an agent's answer appears to contain a leaked credential — a bearer
  * token, an API key/secret/password assignment, or a PEM private key block. Agents whose
- * tools touch MCP servers or live Kafka state (which are configured with bearer tokens)
+ * tools touch metrics stores or live Kafka state (which are configured with bearer tokens)
  * attach this via {@code PromptRunner.withGuardRails(INSTANCE)} as a last line of defense
  * against the LLM echoing a secret back into the chat.
  * <p>

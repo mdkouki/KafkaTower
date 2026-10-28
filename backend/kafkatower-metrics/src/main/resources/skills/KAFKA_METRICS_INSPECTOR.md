@@ -28,13 +28,13 @@ of truth. Never guess or invent a metric name.
 - **Instant vs range**: default to `query` (instant). Only use `query_range` when the user explicitly asks for a trend or history (last 1h step 10m / last 24h step 30m).
 - **Label hygiene**: `by()` clauses must name only the labels needed for the answer — no partition, pod, uid, or hash labels unless the question specifically targets one partition.
 
-The discovery cap/gate and the VictoriaMetrics failure circuit breaker are shared with
-`KafkaInvestigator` (same backend, same failure modes) — see the VM Query Guardrails appended
+The discovery cap/gate and the metrics failure circuit breaker are shared with
+`KafkaInvestigator` (same backend, same failure modes) — see the Metrics Query Guardrails appended
 to this skill rather than repeated here.
 
 ---
 
-## vm-mcp Tool Reference
+## Metrics Tool Reference
 
 | Task | Tool |
 |---|---|

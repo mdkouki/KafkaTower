@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 
 /**
  * Pushes the shared, cross-specialist behavioral guidance (tool-output handling, query
- * strategy, reply format, VictoriaMetrics query guardrails — see
+ * strategy, reply format, metrics query guardrails — see
  * kafkatower-common/src/main/resources/skills/shared/) into every deployed {@link Specialist}.
  * <p>
  * This lives in kafkatower-app rather than in each specialist module on purpose: the shared
@@ -34,7 +34,7 @@ public class SpecialistGuidanceInjector {
     private static final Map<String, List<String>> SHARED_SKILLS_BY_SPECIALIST = Map.of(
             "KafkaInvestigator", List.of(
                     "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
-                    "/skills/shared/VM_QUERY_GUARDRAILS.md",
+                    "/skills/shared/METRICS_QUERY_GUARDRAILS.md",
                     "/skills/shared/QUERY_STRATEGY.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaLogInspector", List.of(
@@ -42,7 +42,7 @@ public class SpecialistGuidanceInjector {
                     "/skills/shared/QUERY_STRATEGY.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaMetricsInspector", List.of(
-                    "/skills/shared/VM_QUERY_GUARDRAILS.md",
+                    "/skills/shared/METRICS_QUERY_GUARDRAILS.md",
                     "/skills/shared/QUERY_STRATEGY.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md")
     );

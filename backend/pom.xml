@@ -143,12 +143,6 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
 
-        <!-- Spring AI MCP client — connects to VictoriaMetrics MCP SSE server -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-client</artifactId>
-        </dependency>
-
         <!-- Reactor (streaming in ChatService / ChatController) -->
         <dependency>
             <groupId>io.projectreactor</groupId>

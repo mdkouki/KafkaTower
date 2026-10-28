@@ -4,10 +4,10 @@
 here.)
 
 > **Verification status:** these `kafka_*` (JMX-exporter-derived) entries are NOT currently
-> verifiable against a live instance — the local/dev VictoriaMetrics backend exposes zero
+> verifiable against a live instance — the local/dev metrics backend exposes zero
 > `kafka_*` series right now (the Kafka JMX exporter isn't scraping in that environment). Treat
 > any `kafka_*` name below as provisional until confirmed with `label_values(__name__)` filtered
-> on `kafka_` against the target cluster's real VictoriaMetrics instance, and correct this file
+> on `kafka_` against the target cluster's real metrics store, and correct this file
 > once confirmed.
 
 ---

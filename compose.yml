@@ -258,19 +258,17 @@ services:
     command:
       - -promscrape.config=/etc/victoriametrics/scrape.yml
 
-  vm-mcp:
-    image: ghcr.io/victoriametrics-community/mcp-victoriametrics:latest
-    container_name: vm-mcp
-    hostname: vm-mcp
-    depends_on:
-      - victoriametrics
+  # Optional alternative to victoriametrics: `docker compose --profile prometheus up -d prometheus`,
+  # then run the app with AGENT_METRICS_URL=http://localhost:9090. Same scrape config.
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    hostname: prometheus
+    profiles: ["prometheus"]
     ports:
-      - "8083:8080"
-    environment:
-      - VM_INSTANCE_ENTRYPOINT=http://victoriametrics:8428
-      - VM_INSTANCE_TYPE=single
-      - MCP_SERVER_MODE=sse
-      - MCP_LISTEN_ADDR=:8080
+      - "9090:9090"
+    volumes:
+      - ./config/scrape.yml:/etc/prometheus/prometheus.yml:ro
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:latest

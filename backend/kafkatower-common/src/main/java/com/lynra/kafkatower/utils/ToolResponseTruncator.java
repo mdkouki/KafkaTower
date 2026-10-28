@@ -43,7 +43,7 @@ public class ToolResponseTruncator {
     /**
      * Same cap/log/notice mechanics as {@link #truncateIfNeeded(String, String)}, with
      * caller-supplied advice text — used by non-{@code @LlmTool} callers (e.g.
-     * {@link com.lynra.kafkatower.agents.specialists.config.ReconnectingMcpTool}, which this AOP aspect
+     * {@link com.lynra.kafkatower.agents.specialists.config.PromQlQueryTools}, which this AOP aspect
      * can't reach) that want guidance tailored to their own tool's parameters instead of the
      * generic default.
      */
