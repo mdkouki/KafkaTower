@@ -36,6 +36,19 @@ class AgentPlatformBootTest {
     @Autowired
     private AgentPlatform agentPlatform;
 
+    @Autowired
+    private com.embabel.agent.api.tool.config.ToolLoopConfiguration toolLoopConfiguration;
+
+    @Test
+    void toolLoopRunsInParallelWithTimeoutsLongEnoughForASpecialist() {
+        assertThat(toolLoopConfiguration.getType())
+                .isEqualTo(com.embabel.agent.api.tool.config.ToolLoopConfiguration.ToolLoopType.PARALLEL);
+        // Embabel's defaults (30s/60s) would cut a multi-turn specialist call off mid-run.
+        assertThat(toolLoopConfiguration.getParallel().getPerToolTimeout()).isGreaterThanOrEqualTo(java.time.Duration.ofMinutes(5));
+        assertThat(toolLoopConfiguration.getParallel().getBatchTimeout())
+                .isGreaterThan(toolLoopConfiguration.getParallel().getPerToolTimeout());
+    }
+
     @Test
     void allProductionAgentsDeployAtStartup() {
         List<Agent> agents = agentPlatform.agents();

@@ -38,6 +38,13 @@ models:
     max_tokens: 16384
     temperature: 1.0
 
+  - name: "lmstudio-community"
+    model_id: "lmstudio-community/Qwen3.5-9B-GGUF"
+    display_name: "lmstudio-community/Qwen3.5-9B-GGUF"
+    knowledge_cutoff_date: "2024-10-01"
+    max_tokens: 16384
+    temperature: 1.0
+
 embedding_models:
   - name: "text_embedding_3_small"
     model_id: "text-embedding-3-small"

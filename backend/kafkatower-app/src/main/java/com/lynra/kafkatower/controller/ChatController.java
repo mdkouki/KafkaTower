@@ -26,7 +26,7 @@ public class ChatController {
 
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatRequest request) {
-        // Worst case is 1 classification call + up to 3 orchestration rounds, each potentially
+        // Worst case is up to 3 orchestration rounds, each potentially
         // calling several specialist sub-agents (their own multi-turn tool-calling LLM loops)
         // plus a completeness review — comfortably exceeds 120s under load.
         SseEmitter emitter = new SseEmitter(600_000L);

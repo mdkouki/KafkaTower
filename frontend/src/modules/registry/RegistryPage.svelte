@@ -3,6 +3,8 @@
   import { authUser } from '../../core/auth.js';
   import GroupStatePopup from './GroupStatePopup.svelte';
   import HudCore from './HudCore.svelte';
+  import DependencyGraph from './DependencyGraph.svelte';
+  import TabBar from '../../core/TabBar.svelte';
 
   let clusters = [];
   let selectedClusterName = null;
@@ -19,6 +21,8 @@
   let detail = null;
   let loadingDetail = false;
   let detailError = null;
+
+  let activeTab = 'details'; // 'details' | 'dependencies'
 
   let openGroupPopup = null; // { group } | null
 
@@ -244,14 +248,29 @@
         </div>
 
         <div class="detail-panel">
-          {#if loadingDetail}
-            <div class="state-block inline"><span class="spinner"></span></div>
-          {:else if detailError}
-            <div class="state-block inline">
-              <div role="alert" class="alert-box"><span>Could not load detail: {detailError}</span></div>
+          {#if selectedPrincipal}
+            <TabBar tabs={[{ id: 'details', label: 'Details' }, { id: 'deps', label: 'Dependencies' }]}
+                    active={activeTab === 'dependencies' ? 'deps' : 'details'} label="Principal views"
+                    on:change={(e) => (activeTab = e.detail === 'deps' ? 'dependencies' : 'details')} />
+          {/if}
+          {#if activeTab === 'dependencies' && selectedPrincipal}
+            <div class="tab-body" role="tabpanel" id="panel-deps" aria-labelledby="tab-deps">
+              {#key selectedPrincipal}
+                <DependencyGraph clusterName={selectedClusterName} principal={selectedPrincipal} on:select={(e) => loadDetail(e.detail)} />
+              {/key}
             </div>
-          {:else if detail}
-            <HudCore {detail} clusterName={selectedClusterName} on:viewgroup={handleViewGroup} on:copied={handleCopied} />
+          {:else}
+            <div class="tab-body" role="tabpanel" id="panel-details" aria-labelledby="tab-details">
+              {#if loadingDetail}
+                <div class="state-block inline"><span class="spinner"></span></div>
+              {:else if detailError}
+                <div class="state-block inline">
+                  <div role="alert" class="alert-box"><span>Could not load detail: {detailError}</span></div>
+                </div>
+              {:else if detail}
+                <HudCore {detail} clusterName={selectedClusterName} on:viewgroup={handleViewGroup} on:copied={handleCopied} />
+              {/if}
+            </div>
           {/if}
         </div>
       </div>
@@ -500,6 +519,15 @@
     flex: 1;
     min-width: 0;
     display: flex;
+    flex-direction: column;
     padding: 20px;
+    gap: 12px;
   }
+
+  .tab-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
 </style>

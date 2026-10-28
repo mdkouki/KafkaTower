@@ -29,12 +29,14 @@ public class ChatService {
     private record ConversationTurn(String user, String agent) {}
 
     private final AgentPlatform agentPlatform;
+    private final AsyncPromptClassifier promptClassifier;
     // keyed by userId:sessionId
     private final Map<String, Deque<ConversationTurn>> sessionHistory = new ConcurrentHashMap<>();
     private volatile Agent kafkaInspectorAgent;
 
-    public ChatService(AgentPlatform agentPlatform) {
+    public ChatService(AgentPlatform agentPlatform, AsyncPromptClassifier promptClassifier) {
         this.agentPlatform = agentPlatform;
+        this.promptClassifier = promptClassifier;
     }
 
     /**
@@ -77,6 +79,11 @@ public class ChatService {
         String contextId = userId + ":" + sessionId;
 
         String messageWithHistory = buildMessageWithHistory(contextId, message);
+
+        // Analytics-only classification: fire-and-forget on its own pool so the answer never waits
+        // on it. Runs on the raw message (not messageWithHistory) and takes userId explicitly —
+        // SecurityContextHolder is empty on the pool thread.
+        promptClassifier.classifyAsync(message, userId);
 
         return Flux.<String>create(sink -> {
             // AgentStatusEventListener and AgentPlanLogger are both Spring @Component beans —

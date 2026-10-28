@@ -8,7 +8,7 @@ import com.lynra.kafkatower.agents.core.audit.LlmCallTimer;
 import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.audit.ToolCallEvidenceCollector;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
-import com.lynra.kafkatower.chatbot.PromptClassificationTool;
+import com.lynra.kafkatower.chatbot.AgentStatusEventListener;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -39,7 +39,6 @@ public class KafkaInspector {
      *  fact (0.38) versus two unrelated reasons (0.125) — see KafkaInspectorTest. */
     private static final double GAP_OVERLAP_THRESHOLD = 0.35;
 
-    private final PromptClassificationTool classificationTool;
     private final SubAgentTools subAgentTools;
 
     /** Draft -> reviewer -> refine, at most this many rounds. Every draft is reviewed, including the last. */
@@ -48,14 +47,12 @@ public class KafkaInspector {
     /** Any single LLM call (classification, draft, completeness-check) slower than this logs a warning. */
     private final long slowCallThresholdMs;
 
-    private String analyticsPrompt;
     private String orchestrationPrompt;
     private String completenessCheckPrompt;
 
-    public KafkaInspector(PromptClassificationTool classificationTool, SubAgentTools subAgentTools,
+    public KafkaInspector(SubAgentTools subAgentTools,
                            @Value("${agent.orchestration.max-rounds:2}") int maxOrchestrationRounds,
                            @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
-        this.classificationTool = classificationTool;
         this.subAgentTools = subAgentTools;
         this.maxOrchestrationRounds = maxOrchestrationRounds;
         this.slowCallThresholdMs = slowCallThresholdMs;
@@ -63,7 +60,6 @@ public class KafkaInspector {
 
     @PostConstruct
     void loadSkills() {
-        analyticsPrompt = SkillLoader.loadContent("/skills/ROOT_ANALYTICS.md");
         orchestrationPrompt = SkillLoader.loadContent("/skills/ROOT_ORCHESTRATOR.md")
                 + "\n\n" + SkillLoader.loadContent("/skills/shared/UNTRUSTED_TOOL_OUTPUT.md");
         completenessCheckPrompt = SkillLoader.loadContent("/skills/ROOT_COMPLETENESS_CHECK.md");
@@ -72,12 +68,6 @@ public class KafkaInspector {
     @AchievesGoal(description = "User question answered by the appropriate specialist or by collaboration between the list of specialists, with the draft reviewed for completeness before it is returned")
     @Action(description = "Analyze the Kafka question, orchestrate whichever specialist agent(s) are needed, and iterate if an independent review finds the draft incomplete")
     public AgentAnswer answer(UserMessage message, Ai ai) {
-        ClassificationResult classification = LlmCallTimer.timed(log, "classification", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
-                        .withSystemPrompt(analyticsPrompt)
-                        .createObject(message.text(), ClassificationResult.class));
-        classificationTool.classifyAndRecord(classification.theme(), classification.keywords(), classification.targetAgent());
-
         String question = message.text();
         String draft = null;
         String gap = null;
@@ -91,7 +81,8 @@ public class KafkaInspector {
 
         for (int round = 1; round <= maxOrchestrationRounds; round++) {
             String prompt = (round == 1) ? question
-                    : followUpPrompt(question, draft, gap, classification.theme(), evidenceSnapshot);
+                    : followUpPrompt(question, draft, gap, evidenceSnapshot);
+            AgentStatusEventListener.emit(round == 1 ? "drafting_answer" : "refining_answer");
 
             // Non-streaming on purpose — nothing ever reached the browser token-by-token here
             // anyway: every round already ran inside TokenStreamSink.suppressed (the final
@@ -122,6 +113,7 @@ public class KafkaInspector {
             // directly by the lambda below (not effectively final) — snapshot into final locals.
             final String draftForReview = draft;
             final String evidenceForReview = evidenceSnapshot;
+            AgentStatusEventListener.emit("reviewing_answer");
             Completeness completeness = LlmCallTimer.timed(log, "completeness-check round " + round, slowCallThresholdMs, () ->
                     ai.withAutoLlm()
                             .withSystemPrompt(completenessCheckPrompt)
@@ -197,9 +189,9 @@ public class KafkaInspector {
         return words;
     }
 
-    private String followUpPrompt(String question, String priorDraft, String gap, String theme, String evidenceSoFar) {
+    private String followUpPrompt(String question, String priorDraft, String gap, String evidenceSoFar) {
         return """
-                Original user question (about %s):
+                Original user question:
                 %s
 
                 Your previous draft answer:
@@ -228,6 +220,6 @@ public class KafkaInspector {
 
                 Output the complete answer text (not a diff or a description of what you changed),
                 with the gap closed and everything else preserved exactly as it was.
-                """.formatted(theme, question, priorDraft, gap, evidenceSoFar);
+                """.formatted(question, priorDraft, gap, evidenceSoFar);
     }
 }

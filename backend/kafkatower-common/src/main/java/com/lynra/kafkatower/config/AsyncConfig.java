@@ -24,4 +24,19 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    // Runs the analytics classification LLM call, which takes seconds — kept off
+    // promptAnalyticsExecutor so slow LLM calls can't delay the quick DB writes queued there.
+    // Bounded queue + default AbortPolicy: when saturated the caller drops the classification
+    // (analytics only) rather than ever running it on, or blocking, the chat request thread.
+    @Bean
+    public Executor promptClassificationExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("prompt-classification-");
+        executor.initialize();
+        return executor;
+    }
 }

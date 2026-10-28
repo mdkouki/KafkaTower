@@ -3,6 +3,8 @@ package com.lynra.kafkatower.controller;
 import com.lynra.kafkatower.kafka.GroupService;
 import com.lynra.kafkatower.model.AclClusterStatus;
 import com.lynra.kafkatower.model.AclUserSummaryLite;
+import com.lynra.kafkatower.model.PrincipalDependencies;
+import com.lynra.kafkatower.service.PrincipalDependencyBuilder;
 import com.lynra.kafkatower.model.UserAclSummary;
 import com.lynra.kafkatower.service.AclGraphStore;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -53,6 +55,15 @@ public class AclRegistryController {
     public ResponseEntity<UserAclSummary> getUser(@RequestParam String clusterName, @RequestParam String principal) {
         return store.get(clusterName)
                 .flatMap(g -> Optional.ofNullable(g.usersByPrincipal().get(principal)))
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Principals linked to {@code principal} through shared topics — see {@link PrincipalDependencyBuilder}. */
+    @GetMapping("/acl-users/dependencies")
+    public ResponseEntity<PrincipalDependencies> dependencies(@RequestParam String clusterName, @RequestParam String principal) {
+        return store.get(clusterName)
+                .map(g -> PrincipalDependencyBuilder.build(g, principal))
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }

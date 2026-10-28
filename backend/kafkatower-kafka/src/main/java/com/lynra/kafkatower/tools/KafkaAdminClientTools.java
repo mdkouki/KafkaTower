@@ -18,6 +18,7 @@ import org.apache.kafka.common.quota.ClientQuotaFilterComponent;
 import org.apache.kafka.common.resource.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.lynra.kafkatower.utils.CachedTool;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -50,6 +51,7 @@ public class KafkaAdminClientTools {
     // -----------------------------------------------------------------------
 
     @LlmTool(description = "List all brokers in the cluster with their IDs, hosts, ports, and which is the controller. Always safe to call. Parameter clusterName: name of the Kafka cluster.")
+    @CachedTool(ttlSeconds = 30)
     public String listBrokers(String clusterName) {
         try {
             DescribeClusterResult result = admin(clusterName).describeCluster();
@@ -71,6 +73,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "Describe the cluster: cluster ID, controller broker, and total broker count. Always safe to call. Parameter clusterName: name of the Kafka cluster.")
+    @CachedTool(ttlSeconds = 30)
     public String describeCluster(String clusterName) {
         try {
             DescribeClusterResult result = admin(clusterName).describeCluster();
@@ -88,6 +91,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "Describe dynamic and non-default static configs for a specific broker (listeners, log dirs, thread counts, etc.). Parameter clusterName: name of the Kafka cluster. Parameter brokerId: broker ID (integer).")
+    @CachedTool(ttlSeconds = 30)
     public String describeBrokerConfigs(String clusterName, int brokerId) {
         try {
             ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId));
@@ -121,6 +125,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter prefix: required, non-empty topic name prefix filter.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String listTopics(String clusterName, String prefix) {
         if (prefix == null || prefix.isBlank()) {
             log.warn("listTopics rejected for cluster {}: no prefix given", clusterName);
@@ -151,6 +156,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter topicName: topic name.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String describeTopic(String clusterName, String topicName) {
         try {
             Map<String, TopicDescription> desc = admin(clusterName)
@@ -212,6 +218,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "Describe topic-level config overrides: retention.ms, cleanup.policy, min.insync.replicas, etc. Parameter clusterName: name of the Kafka cluster. Parameter topicName: topic name.")
+    @CachedTool(ttlSeconds = 30)
     public String describeTopicConfigs(String clusterName, String topicName) {
         try {
             ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
@@ -251,6 +258,7 @@ public class KafkaAdminClientTools {
             Parameter configNamePattern: config key filter — exact name, prefix, or regex; "" or "*" for all non-default configs.
             Parameter maxTopics: safety cap on number of matching topics to describe, e.g. 50.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String describeTopicConfigsBulk(String clusterName, String topicNamePattern, String configNamePattern, int maxTopics) {
         try {
             Set<String> allTopics = admin(clusterName).listTopics().names().get(TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -332,6 +340,7 @@ public class KafkaAdminClientTools {
             Parameter value: the value to compare against, e.g. "50", "3", "86400000", "compact".
             Parameter maxTopics: safety cap on number of matching topics returned, e.g. 50.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String findTopicsByCriteria(String clusterName, String topicNamePattern, String field, String operator, String value, int maxTopics) {
         try {
             Set<String> allTopics = admin(clusterName).listTopics().names().get(TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -426,6 +435,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "List each partition's earliest and latest offsets for a topic, showing the current message count per partition. Parameter clusterName: name of the Kafka cluster. Parameter topicName: topic name.")
+    @CachedTool(ttlSeconds = 15)
     public String listTopicPartitions(String clusterName, String topicName) {
         try {
             Map<String, TopicDescription> desc = admin(clusterName)
@@ -480,6 +490,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter prefix: required, non-empty prefix filter for group IDs.
             """)
+    @CachedTool(ttlSeconds = 15)
     public String listConsumerGroups(String clusterName, String prefix) {
         if (prefix == null || prefix.isBlank()) {
             log.warn("listConsumerGroups rejected for cluster {}: no prefix given", clusterName);
@@ -511,6 +522,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter groupId: consumer group ID.
             """)
+    @CachedTool(ttlSeconds = 15)
     public String describeConsumerGroup(String clusterName, String groupId) {
         try {
             GroupInfo info = groupService.getGroupState(groupId, clusterName);
@@ -549,6 +561,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter groupId: consumer group ID.
             """)
+    @CachedTool(ttlSeconds = 15)
     public String listConsumerGroupOffsets(String clusterName, String groupId) {
         try {
             GroupInfo info = groupService.getGroupState(groupId, clusterName);
@@ -597,6 +610,7 @@ public class KafkaAdminClientTools {
             Parameter clusterName: name of the Kafka cluster.
             Parameter principal: principal in 'User:<name>' format, e.g. 'User:alice'.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String listAclsForPrincipal(String clusterName, String principal) {
         try {
             AclBindingFilter filter = new AclBindingFilter(
@@ -624,6 +638,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "List all ACLs that grant access to a specific topic — including PREFIXED and wildcard ('*') bindings that cover it, not just an exact-name literal match. Output is bounded to one resource. Parameter clusterName: name of the Kafka cluster. Parameter topicName: topic name.")
+    @CachedTool(ttlSeconds = 30)
     public String listAclsForTopic(String clusterName, String topicName) {
         try {
             // PatternType.MATCH resolves PREFIXED and wildcard bindings that actually grant
@@ -657,6 +672,7 @@ public class KafkaAdminClientTools {
     // -----------------------------------------------------------------------
 
     @LlmTool(description = "Describe produce/fetch byte-rate quotas configured for a specific user principal. Parameter clusterName: name of the Kafka cluster. Parameter userName: user name (without 'User:' prefix).")
+    @CachedTool(ttlSeconds = 30)
     public String describeClientQuotaByUser(String clusterName, String userName) {
         try {
             ClientQuotaFilter filter = ClientQuotaFilter.containsOnly(
@@ -672,6 +688,7 @@ public class KafkaAdminClientTools {
     }
 
     @LlmTool(description = "Describe produce/fetch byte-rate quotas configured for a specific client ID. Parameter clusterName: name of the Kafka cluster. Parameter clientId: client ID.")
+    @CachedTool(ttlSeconds = 30)
     public String describeClientQuotaByClientId(String clusterName, String clientId) {
         try {
             ClientQuotaFilter filter = ClientQuotaFilter.containsOnly(

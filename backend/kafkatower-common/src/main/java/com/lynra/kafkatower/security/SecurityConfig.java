@@ -35,7 +35,7 @@ import java.util.Optional;
 public class SecurityConfig {
 
     private static final String[] CSRF_IGNORED_PATHS = {
-            "/api/chat", "/api/registry/**",
+            "/api/chat", "/api/registry/**", "/api/topics/content/**",
             "/api/feedback", "/api/auth/login", "/api/auth/logout",
             "/api/admin/**"
     };
@@ -127,6 +127,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(permitAllPaths).permitAll();
                     auth.requestMatchers("/api/registry/**").hasAnyRole("ADMIN", "USER");
+                    auth.requestMatchers("/api/topics/content/**")
+                            .hasAnyRole(securityProperties.getTopicContentRoles().toArray(String[]::new));
                     auth.requestMatchers("/api/groups/**").hasAnyRole("ADMIN", "USER");
                     auth.requestMatchers("/api/chat").hasAnyRole("ADMIN", "USER");
                     auth.requestMatchers("/api/analytics/**").hasRole("ADMIN");

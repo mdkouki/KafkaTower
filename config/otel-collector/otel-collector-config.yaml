@@ -14,6 +14,12 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  # Keep only LLM spans; drop everything else (including spans with no kind).
+  filter/llm-only:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["openinference.span.kind"] != "LLM"'
   batch:
 
 exporters:
@@ -31,5 +37,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [filter/llm-only, batch]
       exporters: [otlp/phoenix, debug]

@@ -9,6 +9,7 @@ import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import com.lynra.kafkatower.utils.CachedTool;
 import org.springframework.stereotype.Service;
 
 /**
@@ -60,6 +61,7 @@ public class OpenSearchQueryTools {
             Parameter index: index name to search; pass empty string to use the cluster's default index.
             Parameter queryJson: the full OpenSearch request body as JSON.
             """)
+    @CachedTool(ttlSeconds = 20)
     public String searchDocuments(String clusterName, String index, String queryJson) {
         OpenSearchClientProvider provider;
         String target;
@@ -95,6 +97,7 @@ public class OpenSearchQueryTools {
               (and optionally a "query"/filter clause). Any "size" in the body is ignored — hits
               are always suppressed.
             """)
+    @CachedTool(ttlSeconds = 20)
     public String aggregateDocuments(String clusterName, String index, String queryJson) {
         OpenSearchClientProvider provider;
         String target;
@@ -136,6 +139,7 @@ public class OpenSearchQueryTools {
               cluster's default index.
             Parameter documentId: the document's _id.
             """)
+    @CachedTool(ttlSeconds = 30)
     public String getDocument(String clusterName, String index, String documentId) {
         OpenSearchClientProvider provider;
         String target;

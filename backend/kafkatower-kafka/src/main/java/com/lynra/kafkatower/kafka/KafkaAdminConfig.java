@@ -32,7 +32,7 @@ public class KafkaAdminConfig {
         Map<String, AdminClient> clients = properties.getClusters().entrySet().stream()
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
-                        e -> AdminClient.create(buildConfig(e.getValue()))
+                        e -> AdminClient.create(clientConfig(e.getValue()))
                 ));
         return clients;
     }
@@ -56,7 +56,8 @@ public class KafkaAdminConfig {
         }
     }
 
-    private Map<String, Object> buildConfig(KafkaClustersProperties.ClusterConfig cluster) {
+    /** Connection/security settings for one cluster, valid for both AdminClient and Consumer. */
+    public static Map<String, Object> clientConfig(KafkaClustersProperties.ClusterConfig cluster) {
         Map<String, Object> config = new HashMap<>();
         config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
         config.put(AdminClientConfig.SECURITY_PROTOCOL_CONFIG, cluster.getSecurityProtocol());
@@ -82,7 +83,7 @@ public class KafkaAdminConfig {
         return config;
     }
 
-    private void putIfSet(Map<String, Object> config, String key, String value) {
+    private static void putIfSet(Map<String, Object> config, String key, String value) {
         if (value != null && !value.isBlank()) {
             config.put(key, value);
         }

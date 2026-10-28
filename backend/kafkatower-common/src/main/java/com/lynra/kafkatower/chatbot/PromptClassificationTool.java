@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Records prompt-classification analytics. Called directly as a plain Java method from
- * {@code KafkaInspector.answer} with a {@link com.lynra.kafkatower.agents.core.root.ClassificationResult}
- * produced by a separate LLM call against {@code ROOT_ANALYTICS.md} — it is never invoked via
+ * {@code AsyncPromptClassifier} with a {@link com.lynra.kafkatower.agents.core.root.ClassificationResult}
+ * produced by a separate, off-the-critical-path LLM call against {@code ROOT_ANALYTICS.md} — it is never invoked via
  * LLM tool-calling, so it intentionally carries no Embabel action/tool annotations.
  */
 @Component
@@ -34,7 +34,12 @@ public class PromptClassificationTool {
     public void classifyAndRecord(String theme, String keywords, String targetAgent) {
         // Capture the user here, on the request thread — analyticsService.record runs async on a
         // pool thread where SecurityContextHolder would be empty.
-        analyticsService.record(theme, keywords, targetAgent, currentUserId());
+        classifyAndRecord(theme, keywords, targetAgent, currentUserId());
+    }
+
+    /** For callers already off the request thread, which captured {@code userId} beforehand. */
+    public void classifyAndRecord(String theme, String keywords, String targetAgent, String userId) {
+        analyticsService.record(theme, keywords, targetAgent, userId);
         log.debug("Analytics queued — theme: {}, keywords: {}, agent: {}", theme, keywords, targetAgent);
     }
 

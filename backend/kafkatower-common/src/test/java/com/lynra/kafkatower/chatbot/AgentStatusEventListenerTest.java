@@ -71,4 +71,31 @@ class AgentStatusEventListenerTest {
 
         assertThat(pushed).isEmpty();
     }
+
+    @Test
+    void emitPushesPrefixedLabelToTheRegisteredSink() {
+        List<String> pushed = new ArrayList<>();
+        AgentStatusEventListener.register(pushed::add);
+
+        AgentStatusEventListener.emit("reviewing_answer");
+
+        assertThat(pushed).containsExactly(AgentStatusEventListener.STATUS_PREFIX + "reviewing_answer");
+    }
+
+    @Test
+    void emitIsANoOpWithoutARegisteredSink() {
+        AgentStatusEventListener.emit("drafting_answer"); // must not throw
+    }
+
+    @Test
+    void emitReachesTheSinkFromAVirtualThreadSpawnedByTheRequestThread() throws Exception {
+        List<String> pushed = java.util.Collections.synchronizedList(new ArrayList<>());
+        AgentStatusEventListener.register(pushed::add);
+
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            executor.submit(() -> AgentStatusEventListener.emit("analyzing_metrics")).get();
+        }
+
+        assertThat(pushed).containsExactly(AgentStatusEventListener.STATUS_PREFIX + "analyzing_metrics");
+    }
 }

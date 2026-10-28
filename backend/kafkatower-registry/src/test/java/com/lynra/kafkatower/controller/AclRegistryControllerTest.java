@@ -136,4 +136,21 @@ class AclRegistryControllerTest {
         assertEquals(1, result.size());
         assertEquals("orders-consumer", result.get(0).groupId());
     }
+
+    @Test
+    void dependenciesReturns404ForUnknownPrincipal() {
+        when(store.get("prod")).thenReturn(Optional.of(graph));
+
+        assertEquals(HttpStatus.NOT_FOUND, controller.dependencies("prod", "User:nobody").getStatusCode());
+    }
+
+    @Test
+    void dependenciesReturnsNeighbours() {
+        when(store.get("prod")).thenReturn(Optional.of(graph));
+
+        ResponseEntity<com.lynra.kafkatower.model.PrincipalDependencies> response = controller.dependencies("prod", "User:alice");
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("User:alice", response.getBody().principal());
+    }
 }

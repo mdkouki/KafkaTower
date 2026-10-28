@@ -19,6 +19,7 @@ class ChatServiceTest {
     private ChatService chatService;
     private AgentPlatform agentPlatform;
     private AgentProcess agentProcess;
+    private AsyncPromptClassifier promptClassifier;
 
     @BeforeEach
     void setUp() {
@@ -34,7 +35,8 @@ class ChatServiceTest {
         when(agentProcess.resultOfType(AgentAnswer.class))
                 .thenReturn(new AgentAnswer("Test answer"));
 
-        chatService = new ChatService(agentPlatform);
+        promptClassifier = mock(AsyncPromptClassifier.class);
+        chatService = new ChatService(agentPlatform, promptClassifier);
         chatService.init();
     }
 

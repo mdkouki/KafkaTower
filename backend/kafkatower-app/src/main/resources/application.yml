@@ -7,13 +7,23 @@ server:
 
 embabel:
   models:
-    default-llm: gpt-5.1
+    default-llm: 'mistral-medium-2508'
   agent:
     platform:
+      # Run the tool calls an LLM emits in the same turn concurrently (e.g. askMetrics + askLogs, or
+      # several PromQL queries) instead of one after another. Applies to the orchestrator and every
+      # specialist. The timeouts MUST exceed a specialist's own multi-turn run — the defaults (30s per
+      # tool, 60s per batch) would cut one off. Roll back by setting type: DEFAULT.
+      toolloop:
+        type: PARALLEL
+        parallel:
+          per-tool-timeout: 300s
+          batch-timeout: 330s
+          executor-type: VIRTUAL
       models:
         openai:
           api-key: ${ECGPT_API_KEY}
-          base-url: https://api.tech.ec.europa.eu/ecgpt
+          base-url: http://localhost:1234
       observability:
         enabled: true
         service-name: kafkatower
@@ -22,6 +32,11 @@ embabel:
 spring:
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  threads:
+    # Every chat request blocks for seconds-to-minutes on LLM/tool calls; virtual threads lift the
+    # platform-thread ceiling on concurrent chats. See also KafkaTowerApplication (Reactor side).
+    virtual:
+      enabled: true
   web:
     resources:
       static-locations: classpath:/static/
@@ -60,10 +75,10 @@ spring:
 
     openai:
       api-key: ${ECGPT_API_KEY}
-      base-url: https://api.tech.ec.europa.eu/ecgpt
+      base-url: http://localhost:1234
       chat:
         options:
-          model: gpt-5.1
+          model: mistral-medium-2508
 
 agent:
   orchestration:
@@ -167,6 +182,10 @@ kafka:
 app:
   security:
     mode: jaas   # jaas | ldap | oidc
+
+    # Roles allowed to read Kafka message payloads (Topics > Content tab). ADMIN only by default;
+    # add USER to open it to everyone signed in.
+    topic-content-roles: [ADMIN]
 
     api-clients:
       - name: kafka-ui

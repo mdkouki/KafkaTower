@@ -14,6 +14,8 @@ public class SecurityProperties {
 
     private String mode = "jaas"; // jaas | ldap | oidc
     private List<ApiClient> apiClients = new ArrayList<>();
+    /** Roles allowed to read Kafka message payloads (topic Content tab). Defaults to ADMIN only. */
+    private List<String> topicContentRoles = new ArrayList<>(List.of("ADMIN"));
 
     private JaasConfig jaas = new JaasConfig();
     private LdapConfig ldap = new LdapConfig();
@@ -33,6 +35,14 @@ public class SecurityProperties {
 
     public void setApiClients(List<ApiClient> apiClients) {
         this.apiClients = apiClients;
+    }
+
+    public List<String> getTopicContentRoles() {
+        return topicContentRoles;
+    }
+
+    public void setTopicContentRoles(List<String> topicContentRoles) {
+        this.topicContentRoles = topicContentRoles;
     }
 
     public JaasConfig getJaas() {

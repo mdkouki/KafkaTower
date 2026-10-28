@@ -185,6 +185,16 @@
   }
 
   const STATUS_PREFIX = '__status__:';
+  // Backend status labels (AgentStatusEventListener / KafkaInspector) -> readable text.
+  // Unknown labels fall back to the raw label so a new backend status still shows something.
+  const STATUS_LABELS = {
+    drafting_answer: 'Drafting the answer…',
+    reviewing_answer: 'Reviewing the answer…',
+    refining_answer: 'Refining the answer…',
+    analyzing_metrics: 'Analyzing metrics…',
+    investigating_cluster: 'Investigating the cluster…',
+    searching_logs: 'Searching logs…',
+  };
 
   let isOpen = false;
   let messages = [];
@@ -330,7 +340,8 @@
 
   function appendToMessage(id, chunk) {
     if (chunk.startsWith(STATUS_PREFIX)) {
-      statusText = chunk.slice(STATUS_PREFIX.length);
+      const label = chunk.slice(STATUS_PREFIX.length);
+      statusText = STATUS_LABELS[label] ?? label;
       return;
     }
     if (id === streamingMsgId) {
@@ -473,7 +484,7 @@
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          <p>Ask me anything about your Kafka clusters, topics, consumer groups, or application dependencies.</p>
+          <p>Ask me anything about your Kafka clusters, topics, consumer groups, or dependencies.</p>
         </div>
       {:else}
         {#each messages as msg (msg.id)}
@@ -531,7 +542,7 @@
     </div>
 
     {#if statusText}
-      <div class="chat-status-bar">
+      <div class="chat-status-bar" role="status" aria-live="polite">
         <span class="status-spinner"></span>
         {statusText}
       </div>

@@ -361,6 +361,40 @@ services:
     volumes:
       - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
 
+  # ── Arize Phoenix (LLM tracing / observability) ────────────────────────────
+  # UI + OTLP/HTTP collector on 6006 (traces to http://localhost:6006/v1/traces),
+  # OTLP/gRPC on 4317. From other containers use http://phoenix:6006.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    hostname: phoenix
+    ports:
+      - "6006:6006"
+      - "4317:4317"
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+
+  # ── OTel Collector (app → collector → Phoenix) ─────────────────────────────
+  # The backend sends plain OTLP/HTTP to http://localhost:4318/v1/traces; the collector
+  # filters (LLM spans only) and forwards to Phoenix's OTLP gRPC port. Host 4317 is already
+  # taken by Phoenix, so only 4318 is published here.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    hostname: otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4318:4318"
+    environment:
+      # Only needed when Phoenix runs with PHOENIX_ENABLE_AUTH=True; empty otherwise.
+      - PHOENIX_API_KEY=${PHOENIX_API_KEY:-}
+    volumes:
+      - ./config/otel-collector/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      - phoenix
+
   kminion:
     image: redpandadata/kminion:latest
     hostname: kminion
@@ -390,5 +424,8 @@ services:
       - KMINION_KAFKA_SASL_PASSWORD=kminion-secret
       - KMINION_KAFKA_SASL_MECHANISM=PLAIN
 
+
+
 volumes:
   opensearch_data:
+  phoenix_data:

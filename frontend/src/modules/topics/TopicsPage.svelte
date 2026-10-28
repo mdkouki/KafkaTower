@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { authUser } from '../../core/auth.js';
   import TopicDetailPanel from './TopicDetailPanel.svelte';
+  import TopicContent from './TopicContent.svelte';
+  import TabBar from '../../core/TabBar.svelte';
 
   let clusters = [];
   let selectedClusterName = null;
@@ -18,6 +20,7 @@
   let detail = null;
   let loadingDetail = false;
   let detailError = null;
+  let activeTab = 'details'; // 'details' | 'content'
 
   onMount(loadClusters);
 
@@ -228,14 +231,28 @@
         </div>
 
         <div class="detail-panel">
-          {#if loadingDetail}
-            <div class="state-block inline"><span class="spinner"></span></div>
-          {:else if detailError}
-            <div class="state-block inline">
-              <div role="alert" class="alert-box"><span>Could not load detail: {detailError}</span></div>
+          {#if selectedTopicName}
+            <TabBar tabs={[{ id: 'details', label: 'Details' }, { id: 'content', label: 'Content' }]} active={activeTab}
+                    label="Topic views" on:change={(e) => (activeTab = e.detail)} />
+          {/if}
+          {#if activeTab === 'content' && detail}
+            <div class="tab-body" role="tabpanel" id="panel-content" aria-labelledby="tab-content">
+              {#key detail.name}
+                <TopicContent clusterName={selectedClusterName} topic={detail.name} partitionCount={detail.partitionCount} />
+              {/key}
             </div>
-          {:else if detail}
-            <TopicDetailPanel {detail} clusterName={selectedClusterName} />
+          {:else}
+            <div class="tab-body" role="tabpanel" id="panel-details" aria-labelledby="tab-details">
+              {#if loadingDetail}
+                <div class="state-block inline"><span class="spinner"></span></div>
+              {:else if detailError}
+                <div class="state-block inline">
+                  <div role="alert" class="alert-box"><span>Could not load detail: {detailError}</span></div>
+                </div>
+              {:else if detail}
+                <TopicDetailPanel {detail} clusterName={selectedClusterName} />
+              {/if}
+            </div>
           {/if}
         </div>
       </div>
@@ -474,6 +491,14 @@
     flex: 1;
     min-width: 0;
     display: flex;
+    flex-direction: column;
     padding: 20px;
+    gap: 12px;
+  }
+
+  .tab-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
   }
 </style>

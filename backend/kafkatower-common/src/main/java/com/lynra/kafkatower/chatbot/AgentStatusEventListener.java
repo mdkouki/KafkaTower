@@ -28,13 +28,35 @@ public class AgentStatusEventListener implements AgenticEventListener {
 
     public static final String STATUS_PREFIX = "__status__:";
 
-    private static final ThreadLocal<Consumer<String>> SINK = new ThreadLocal<>();
-    private static final ThreadLocal<Boolean> ROOT_SEEN = ThreadLocal.withInitial(() -> false);
+    // Inheritable on purpose: with Embabel's PARALLEL tool loop (see application.yml) a specialist
+    // sub-process is created on a virtual thread spawned from the request thread, not on the
+    // request thread itself. An ordinary ThreadLocal would be empty there and the specialist's
+    // status label would silently vanish. The sink (FluxSink via Flux.create) is safe to call
+    // from several threads.
+    private static final ThreadLocal<Consumer<String>> SINK = new InheritableThreadLocal<>();
+    private static final ThreadLocal<Boolean> ROOT_SEEN = new InheritableThreadLocal<>() {
+        @Override
+        protected Boolean initialValue() {
+            return false;
+        }
+    };
 
     /** Registers the sink for the chat request running on the calling thread. */
     public static void register(Consumer<String> statusSink) {
         SINK.set(statusSink);
         ROOT_SEEN.set(false);
+    }
+
+    /**
+     * Pushes a status label for the chat request running on the calling thread — for orchestration
+     * phases that aren't a specialist process creation (drafting, reviewing, refining). No-op when
+     * no sink is registered, so callers outside a chat request (tests, background work) are safe.
+     */
+    public static void emit(String label) {
+        Consumer<String> sink = SINK.get();
+        if (sink != null) {
+            sink.accept(STATUS_PREFIX + label);
+        }
     }
 
     public static void clear() {
