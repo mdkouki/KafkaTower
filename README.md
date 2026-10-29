@@ -150,13 +150,13 @@ Prefer Prometheus to VictoriaMetrics? `docker compose --profile prometheus up -d
 ### 3. Run
 
 ```bash
-java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0-SNAPSHOT.jar
+java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0.jar
 ```
 
 Without PostgreSQL, run the file-based H2 database next to the jar instead:
 
 ```bash
-java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=h2
+java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0.jar --spring.profiles.active=h2
 ```
 
 The database connection can be overridden with `DB_URL`, `DB_USER` and `DB_PASSWORD`.
