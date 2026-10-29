@@ -1,7 +1,13 @@
 package com.lynra.kafkatower.agents.core.root;
 
 import com.embabel.agent.api.annotation.LlmTool;
+import com.embabel.agent.api.tool.Tool;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lynra.kafkatower.agents.core.audit.ToolCallEvidenceCollector;
+import com.lynra.kafkatower.agents.core.specialist.Specialist;
+
+import java.util.List;
 
 /**
  * Per-request wrapper around the {@link SubAgentTools} singleton that prepends prior specialist
@@ -9,12 +15,15 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallEvidenceCollector;
  * build on what earlier ones found instead of starting from a blank slate.
  * <p>
  * Constructed fresh per request and passed to {@code ai.withToolObject(...)} instead of the
- * singleton, so Embabel scans this object's {@code @LlmTool} methods instead. Deliberately a
+ * singleton, so Embabel scans this object's {@code @LlmTool} methods instead; the specialist
+ * tools are added separately from {@link #specialistTools()}. Deliberately a
  * plain, non-Spring object holding the evidence collector as a direct field rather than a
  * {@code ThreadLocal} or a second constructor on {@link SubAgentTools} — see
  * EMBABEL_GOAP_ALIGNMENT_PLAN.md for why both of those were tried first and rejected.
  */
 public class EnrichedSubAgentTools {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SubAgentTools delegate;
     private final ToolCallEvidenceCollector evidence;
@@ -43,53 +52,34 @@ public class EnrichedSubAgentTools {
         return delegate.listClusters(query);
     }
 
-    @LlmTool(description = """
-            Ask the metrics specialist about HISTORICAL TIME-SERIES Kafka data: throughput/lag
-            trends, capacity analysis, or comparisons over an explicit time window. Also use this
-            to narrow down a vague or wide-open timeframe (e.g. find exactly when a lag spike or
-            throughput drop started) before handing a precise window to another specialist.
-            Parameter question: a fully self-contained question including any known time window.
-            Findings from any specialist already called this conversation (including an earlier
-            askMetrics call) are automatically prepended for you — no need to paste them in
-            yourself. If those findings and this specialist's own result genuinely disagree, this
-            specialist is expected to flag the disagreement, not silently pick one.
-            """)
-    public String askMetrics(String question) {
-        return delegate.askMetrics(withPriorFindings(question));
+    /**
+     * One tool per specialist Spring deployed, named and described by the specialist itself
+     * ({@link Specialist#toolName()} and its {@code @Agent} description). Pass these to
+     * {@code withTools(...)} alongside this object: a specialist bean is all it takes to become
+     * callable, and one that isn't deployed (e.g. no OpenSearch) is simply absent.
+     */
+    public List<Tool> specialistTools() {
+        return delegate.specialists().stream()
+                .map(this::toolFor)
+                .toList();
     }
 
-    @LlmTool(description = """
-            Ask the live-investigation specialist about CURRENT Kafka state and root-cause
-            analysis: consumer group health, partition assignments, active lag spikes, broker/ACL
-            state. Use for troubleshooting happening right now, or to correlate live state with a
-            metrics trend.
-            Parameter question: a fully self-contained question. Findings from any specialist
-            already called this conversation (including an earlier askInvestigation call) are
-            automatically prepended for you — no need to paste them in yourself. This specialist
-            independently discovers and queries metrics itself (Admin First, Metrics Second), so
-            still mention the specific gap you need closed rather than repeating the original
-            question verbatim. If the prepended findings and this specialist's own result
-            genuinely disagree, this specialist is expected to flag the disagreement, not
-            silently pick one.
-            """)
-    public String askInvestigation(String question) {
-        return delegate.askInvestigation(withPriorFindings(question));
+    private Tool toolFor(Specialist<?, ?> specialist) {
+        return Tool.Companion.of(
+                specialist.toolName(),
+                delegate.toolDescription(specialist),
+                Tool.InputSchema.of(Tool.Parameter.string("question", "Self-contained question for this specialist")),
+                Tool.Metadata.DEFAULT,
+                (Tool.Function) input -> Tool.Result.text(delegate.ask(specialist, withPriorFindings(questionFrom(input)))));
     }
 
-    @LlmTool(description = """
-            Ask the log specialist to search application/service logs and traces for exceptions,
-            errors, or anomalies. Only available when OpenSearch is configured. Works best with a
-            narrow, specific time window — if the user gave a large or open-ended timeframe, call
-            askMetrics first to narrow it down to when the anomaly actually occurred.
-            Parameter question: a fully self-contained question including the (ideally narrow)
-            time window and any service/topic names to search for. Findings from any specialist
-            already called this conversation (including an earlier askLogs call with the same or
-            a related question) are automatically prepended for you. If a repeat search
-            contradicts an earlier one, this specialist is expected to flag the disagreement
-            explicitly rather than silently returning a different answer.
-            """)
-    public String askLogs(String question) {
-        return delegate.askLogs(withPriorFindings(question));
+    /** The tool input is the model's JSON arguments, {@code {"question": "..."}}; fall back to the raw text. */
+    private static String questionFrom(String input) {
+        try {
+            return JSON.readTree(input).path("question").asText(input);
+        } catch (JsonProcessingException e) {
+            return input;
+        }
     }
 
     /**

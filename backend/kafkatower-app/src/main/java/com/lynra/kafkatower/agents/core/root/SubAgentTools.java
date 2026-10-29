@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -26,7 +28,8 @@ import java.util.stream.Collectors;
  * This turns delegation from a fixed classify-then-route-once switch into something the root
  * LLM decides at runtime: it can call zero, one, or several specialists, in whatever order it
  * needs, and feed one specialist's answer into another's question (e.g. narrow a timeframe with
- * {@link #askMetrics} before handing it to {@link #askLogs}).
+ * askMetrics before handing it to askLogs). The specialist tools themselves are built from
+ * {@link #specialists()} — see {@link EnrichedSubAgentTools#specialistTools()}.
  * <p>
  * Needs to give this bean per-request state? See {@link EnrichedSubAgentTools} for the pattern.
  */
@@ -35,25 +38,26 @@ import java.util.stream.Collectors;
 @EmbabelComponent
 public class SubAgentTools {
 
-    private static final String METRICS = "KafkaMetricsInspector";
-    private static final String INVESTIGATION = "KafkaInvestigator";
-    private static final String LOG = "KafkaLogInspector";
+    private static final String QUESTION_GUIDANCE = """
+            Parameter question: a fully self-contained question. Findings from any specialist already \
+            called this conversation are automatically prepended for you — no need to paste them in \
+            yourself. If those findings and this specialist's own result genuinely disagree, it is \
+            expected to flag the disagreement, not silently pick one.""";
 
     private final AgentPlatform agentPlatform;
     private final Map<String, AdminClient> kafkaAdminMap;
-    // Keyed by Specialist.name(), which is defined to match the @Agent name Embabel deploys
-    // under — the same key requireAgent/findAgent use to resolve the runnable Embabel Agent.
     // Spring supplies exactly the specialists currently deployed: a @ConditionalOnProperty-gated
-    // one (e.g. KafkaLogInspector when OpenSearch isn't configured) simply won't be in this map,
-    // which is what askLogs' "not available" branch below relies on.
-    private final Map<String, Specialist<?, ?>> specialistsByName;
+    // one (e.g. KafkaLogInspector when OpenSearch isn't configured) simply isn't in this list,
+    // so it never becomes a tool and the model can't call it. Sorted once so the tool order and
+    // the prompt's tool list are stable. Specialist.name() matches the @Agent name Embabel
+    // deploys under, which is how requireAgent resolves the runnable Embabel Agent.
+    private final List<Specialist<?, ?>> specialists;
 
     public SubAgentTools(AgentPlatform agentPlatform,
                           Map<String, AdminClient> kafkaAdminMap, List<Specialist<?, ?>> specialists) {
         this.agentPlatform = agentPlatform;
         this.kafkaAdminMap = kafkaAdminMap;
-        this.specialistsByName = specialists.stream()
-                .collect(Collectors.toMap(Specialist::name, Function.identity()));
+        this.specialists = specialists.stream().sorted(Comparator.comparing(Specialist::toolName)).toList();
     }
 
     // Agent deployment into AgentPlatform happens on ContextRefreshedEvent, after every
@@ -140,67 +144,26 @@ public class SubAgentTools {
         return prev[b.length()];
     }
 
-    @LlmTool(description = """
-            Ask the metrics specialist about HISTORICAL TIME-SERIES Kafka data: throughput/lag
-            trends, capacity analysis, or comparisons over an explicit time window. Also use this
-            to narrow down a vague or wide-open timeframe (e.g. find exactly when a lag spike or
-            throughput drop started) before handing a precise window to another specialist.
-            Parameter question: a fully self-contained question including any known time window.
-            This specialist has no memory of anything another specialist already found this turn —
-            if you already called askInvestigation or askLogs, restate whatever they established
-            that's relevant here instead of just repeating the user's original question verbatim.
-            """)
-    public String askMetrics(String question) {
-        return invoke(requireSpecialist(METRICS), question);
+    /** Every specialist Spring deployed; the orchestrator exposes each one as an LLM tool. */
+    public List<Specialist<?, ?>> specialists() {
+        return specialists;
     }
 
-    @LlmTool(description = """
-            Ask the live-investigation specialist about CURRENT Kafka state and root-cause
-            analysis: consumer group health, partition assignments, active lag spikes, broker/ACL
-            state. Use for troubleshooting happening right now, or to correlate live state with a
-            metrics trend.
-            Parameter question: a fully self-contained question — include any timeframe or metric
-            findings from other specialists that are relevant. This specialist independently
-            discovers and queries metrics itself (Admin First, Metrics Second) — if askMetrics
-            already ran this turn, say what it found (including "no data" / "no such metric
-            exists") so this specialist doesn't re-run the same discovery and the same PromQL
-            queries from scratch. Do not just pass the user's original question through unchanged
-            if another specialist has already been called this turn.
-            """)
-    public String askInvestigation(String question) {
-        return invoke(requireSpecialist(INVESTIGATION), question);
+    /** The tool names of {@link #specialists()}, for telling specialist findings apart from other tool output. */
+    public SortedSet<String> specialistToolNames() {
+        return specialists.stream().map(Specialist::toolName).collect(Collectors.toCollection(TreeSet::new));
     }
 
-    @LlmTool(description = """
-            Ask the log specialist to search application/service logs and traces for exceptions,
-            errors, or anomalies. Only available when OpenSearch is configured. Works best with a
-            narrow, specific time window — if the user gave a large or open-ended timeframe, call
-            askMetrics first to narrow it down to when the anomaly actually occurred.
-            Parameter question: a fully self-contained question including the (ideally narrow)
-            time window and any service/topic names to search for.
-            """)
-    public String askLogs(String question) {
-        Specialist<?, ?> specialist = specialistsByName.get(LOG);
-        if (specialist == null) {
-            return "Log inspection is not available: no OpenSearch clusters are configured " +
-                    "(agent.mcp.os.enabled / agent.mcp.os.clusters).";
-        }
-        return invoke(specialist, question);
+    /**
+     * What the root LLM sees as the tool's description: the specialist's own {@code @Agent}
+     * description, so it is written once, plus how to phrase the {@code question}.
+     */
+    public String toolDescription(Specialist<?, ?> specialist) {
+        return requireAgent(specialist.name()).getDescription() + "\n\n" + QUESTION_GUIDANCE;
     }
 
-    private Specialist<?, ?> requireSpecialist(String name) {
-        Specialist<?, ?> specialist = specialistsByName.get(name);
-        if (specialist == null) {
-            throw new IllegalStateException("Specialist not deployed: " + name);
-        }
-        return specialist;
-    }
-
-    private String invoke(Specialist<?, ?> specialist, String question) {
-        return invokeTyped(specialist, question);
-    }
-
-    private <Q, A> String invokeTyped(Specialist<Q, A> specialist, String question) {
+    /** Runs {@code specialist} as an Embabel sub-process and returns its answer text. */
+    public <Q, A> String ask(Specialist<Q, A> specialist, String question) {
         Agent agent = requireAgent(specialist.name());
         return run(agent, specialist.question(question), specialist.answerType(), specialist::text);
     }

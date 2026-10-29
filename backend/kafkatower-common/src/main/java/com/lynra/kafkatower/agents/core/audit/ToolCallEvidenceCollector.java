@@ -22,9 +22,13 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
     private static final String ENTRY_SEPARATOR = "\n\n---\n\n";
 
     /** Tool names whose calls/results are specialist findings worth forwarding to the next
-     *  specialist call — as opposed to listClusters, etc. Must stay in
-     *  sync with the {@code @LlmTool} method names on {@code EnrichedSubAgentTools}. */
-    private static final Set<String> SPECIALIST_TOOL_NAMES = Set.of("askLogs", "askMetrics", "askInvestigation");
+     *  specialist call — as opposed to listClusters, etc. Supplied from the deployed specialists
+     *  ({@code Specialist.toolName()}), so a new specialist is covered without touching this class. */
+    private final Set<String> specialistToolNames;
+
+    public ToolCallEvidenceCollector(Set<String> specialistToolNames) {
+        this.specialistToolNames = Set.copyOf(specialistToolNames);
+    }
 
     // Synchronized because Embabel/Spring AI can dispatch multiple tool calls from a single LLM
     // turn concurrently.
@@ -59,7 +63,7 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
     }
 
     /**
-     * Every prior specialist ({@code askLogs}/{@code askMetrics}/{@code askInvestigation}) call
+     * Every prior specialist call (any of the configured specialist tool names)
      * and result recorded so far this request, formatted for prepending onto a new specialist
      * call's question — or {@code null} if no specialist has been called yet. Unlike
      * {@link #transcript()} this excludes non-specialist tool calls (listClusters, etc.):
@@ -67,7 +71,7 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
      */
     public String specialistFindingsSoFar() {
         List<String> specialistCalls = snapshot().stream()
-                .filter(entry -> SPECIALIST_TOOL_NAMES.stream().anyMatch(name -> entry.startsWith("Tool: " + name + "\n")))
+                .filter(entry -> specialistToolNames.stream().anyMatch(name -> entry.startsWith("Tool: " + name + "\n")))
                 .toList();
         if (specialistCalls.isEmpty()) {
             return null;

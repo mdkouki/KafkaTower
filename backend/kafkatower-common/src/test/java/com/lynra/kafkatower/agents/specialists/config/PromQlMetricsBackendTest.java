@@ -94,6 +94,13 @@ class PromQlMetricsBackendTest {
     }
 
     @Test
+    void metricsSaysSoWhenNothingMatchesInsteadOfReturningEmptyText() {
+        body = "{\"status\":\"success\",\"data\":[\"up\"]}";
+
+        assertThat(tools("").metrics("kafka_.*")).contains("No metric names match 'kafka_.*'").doesNotStartWith("\n");
+    }
+
+    @Test
     void metricsCapsTheListAndSaysSo() {
         StringBuilder names = new StringBuilder();
         for (int i = 0; i < 250; i++) names.append(i == 0 ? "" : ",").append("\"m_").append(i).append('"');

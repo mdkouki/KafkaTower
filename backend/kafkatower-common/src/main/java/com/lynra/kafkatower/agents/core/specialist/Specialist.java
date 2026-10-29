@@ -2,7 +2,7 @@ package com.lynra.kafkatower.agents.core.specialist;
 
 /**
  * Common shape implemented by every Kafka specialist sub-agent (KafkaInvestigator,
- * KafkaLogInspector, KafkaMetricsInspector), so the root orchestrator can hold them as
+ * KafkaLogInspector, KafkaMetricsInspector, KafkaRegistryInspector), so the root orchestrator can hold them as
  * {@code List<Specialist<?, ?>>} instead of hardcoding one string constant and one
  * question/answer wiring per specialist.
  * <p>
@@ -13,6 +13,13 @@ package com.lynra.kafkatower.agents.core.specialist;
 public interface Specialist<Q, A> {
 
     String name();
+
+    /**
+     * Name of the LLM tool the root orchestrator calls to reach this specialist, e.g. {@code askMetrics}.
+     * The tool's description is the specialist's {@code @Agent(description)}, so registering a
+     * specialist bean is all it takes to make it callable — there is no second list to update.
+     */
+    String toolName();
 
     Class<A> answerType();
 

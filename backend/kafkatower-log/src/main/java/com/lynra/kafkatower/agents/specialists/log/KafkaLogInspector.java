@@ -40,7 +40,9 @@ import java.util.Set;
 @ConditionalOnProperty(prefix = "agent.mcp.os", name = "enabled", havingValue = "true")
 @ConditionalOnAssistantEnabled
 @Agent(description = "Queries OpenSearch logs for anomalies, exceptions, and distributed traces. " +
-        "Use this agent when the question requires log correlation or trace analysis.")
+        "Use this agent when the question requires log correlation or trace analysis. Works best with a " +
+        "narrow time window: if the user gave a large or open-ended timeframe, narrow it with the metrics " +
+        "agent first. Include the service/topic names to search for.")
 public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaLogInspector.class);
@@ -49,7 +51,7 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
     private final OpenSearchQueryTools queryTools;
     private final long slowCallThresholdMs;
     private String basePrompt;
-    private String systemPrompt;
+    private volatile String sharedGuidance;
 
     public KafkaLogInspector(OpenSearchClientRegistry registry, OpenSearchQueryTools queryTools,
                               @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
@@ -63,14 +65,17 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         // Cross-specialist shared guidance (tool-output handling, query strategy, reply format)
         // is NOT loaded here — see applySharedGuidance below.
         basePrompt = SkillLoader.loadContent("/skills/KAFKA_LOG_INSPECTOR.md");
-        // Until applySharedGuidance runs (after every Specialist bean exists — see the app
-        // module's injector), fall back to the base prompt alone so systemPrompt is never null.
-        systemPrompt = basePrompt;
     }
 
     @Override
     public void applySharedGuidance(String sharedGuidance) {
-        systemPrompt = basePrompt + "\n\n" + sharedGuidance;
+        this.sharedGuidance = sharedGuidance;
+    }
+
+    /** Base skill, plus cross-specialist guidance once {@link #applySharedGuidance} has run. */
+    private String systemPrompt() {
+        String guidance = sharedGuidance;
+        return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
     }
 
     /**
@@ -133,7 +138,7 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         // actually reaching search_documents/aggregate_documents/get_document.
         String response = LlmCallTimer.timed(log, "log answer", slowCallThresholdMs, () ->
                 ai.withAutoLlm()
-                        .withSystemPrompt(systemPrompt + "\n\nYou are querying cluster '" + provider.clusterName() + "'.")
+                        .withSystemPrompt(systemPrompt() + "\n\nYou are querying cluster '" + provider.clusterName() + "'.")
                         .withToolObject(queryTools)
                         .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
@@ -189,6 +194,12 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
     public String name() {
         return KafkaLogInspector.class.getSimpleName();
     }
+
+    @Override
+    public String toolName() {
+        return "askLogs";
+    }
+
 
     @Override
     public Class<LogAnswer> answerType() {

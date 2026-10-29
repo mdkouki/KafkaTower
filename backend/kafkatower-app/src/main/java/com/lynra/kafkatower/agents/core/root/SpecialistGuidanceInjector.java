@@ -43,6 +43,10 @@ public class SpecialistGuidanceInjector {
                     "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
                     "/skills/shared/QUERY_STRATEGY.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
+            "KafkaRegistryInspector", List.of(
+                    "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
+                    "/skills/shared/QUERY_STRATEGY.md",
+                    "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaMetricsInspector", List.of(
                     "/skills/shared/METRICS_QUERY_GUARDRAILS.md",
                     "/skills/shared/QUERY_STRATEGY.md",

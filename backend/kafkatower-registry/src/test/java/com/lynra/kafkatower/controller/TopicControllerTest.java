@@ -8,6 +8,7 @@ import com.lynra.kafkatower.model.TopicDetail;
 import com.lynra.kafkatower.model.TopicGroupLag;
 import com.lynra.kafkatower.model.TopicSummaryLite;
 import com.lynra.kafkatower.service.TopicGraphStore;
+import com.lynra.kafkatower.service.TopicGroupLagService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,7 +41,7 @@ class TopicControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new TopicController(store, groupService);
+        controller = new TopicController(store, new TopicGroupLagService(groupService));
 
         ordersEvents = new TopicDetail("orders.events", 3, 2, false,
                 Map.of("retention.ms", "86400000"), List.of("User:bob"), List.of("User:alice"));

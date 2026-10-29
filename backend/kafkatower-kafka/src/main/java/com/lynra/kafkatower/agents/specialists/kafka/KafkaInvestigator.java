@@ -23,8 +23,14 @@ import org.springframework.beans.factory.annotation.Value;
 @ConditionalOnAssistantEnabled
 @Agent(description = "Handles live Kafka state investigation and active troubleshooting: " +
         "consumer group health, partition assignments, active lag spikes, and root-cause analysis. " +
-        "Use this agent when the answer requires AdminClient or correlating live state with metrics. " +
-        "Gets priority over KafkaMetricsInspector when a question spans both metrics and live state.")
+        "Use this agent when the answer requires AdminClient or correlating live state with metrics, " +
+        "when there is an issue to investigate (a suspected or confirmed problem, an anomaly, or an " +
+        "unexplained/contradictory result from another source), or when the user explicitly asks to " +
+        "investigate, troubleshoot or find a root cause. A plain status question with no such signal " +
+        "doesn't qualify on its own: check the metrics agent first, and investigate only if what comes " +
+        "back is incomplete or doesn't add up. It discovers and queries metrics itself, so name the " +
+        "specific gap to close. Gets priority over KafkaMetricsInspector when a question spans both " +
+        "metrics and live state.")
 public class KafkaInvestigator implements Specialist<InvestigationQuestion, InvestigationAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaInvestigator.class);
@@ -34,7 +40,8 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
-    private String systemPrompt;
+    private String adminReference;
+    private volatile String sharedGuidance;
 
     public KafkaInvestigator(KafkaAdminClientTools kafkaAdminClientTools,
                              MetricsSkillTools metricsSkillTools,
@@ -56,17 +63,20 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         // Cross-specialist shared guidance (tool-output handling, query strategy, reply format)
         // is NOT loaded here — see applySharedGuidance below.
         basePrompt = SkillLoader.loadContent("/skills/kafka-investigation/KAFKA_INVESTIGATOR.md");
-        // Until applySharedGuidance runs (after every Specialist bean exists — see the app
-        // module's injector), fall back to the base prompt alone so systemPrompt is never null.
-        systemPrompt = basePrompt;
+        adminReference = SkillLoader.loadContent("/skills/kafka-investigation/references/kafka-admin-commands.md");
     }
 
     @Override
     public void applySharedGuidance(String sharedGuidance) {
-        systemPrompt = basePrompt
-                + "\n\n" + sharedGuidance
-                + "\n\n## Kafka Admin Commands Reference\n\n"
-                + SkillLoader.loadContent("/skills/kafka-investigation/references/kafka-admin-commands.md");
+        this.sharedGuidance = sharedGuidance;
+    }
+
+    /** Base skill + cross-specialist guidance (once injected) + the admin commands reference. */
+    private String systemPrompt() {
+        String guidance = sharedGuidance;
+        return basePrompt
+                + (guidance == null ? "" : "\n\n" + guidance)
+                + "\n\n## Kafka Admin Commands Reference\n\n" + adminReference;
     }
 
     /**
@@ -80,7 +90,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
             structural precondition for correlateMetrics.
             """)
     public AdminSnapshot gatherAdminState(InvestigationQuestion question, Ai ai) {
-        String prompt = systemPrompt + "\n\n" + """
+        String prompt = systemPrompt() + "\n\n" + """
                 You are running the FIRST step of a two-step investigation: gather current
                 ground truth using ONLY the Kafka Admin Client tools below. Do not speculate
                 about metrics or historical trends here — that happens in the next step.
@@ -110,7 +120,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
             metrics surface (Entity-Scale Discipline). Runs after gatherAdminState.
             """)
     public MetricsCorrelation correlateMetrics(InvestigationQuestion question, AdminSnapshot adminSnapshot, Ai ai) {
-        String base = systemPrompt + "\n\n" + """
+        String base = systemPrompt() + "\n\n" + """
                 You are running the SECOND step of a two-step investigation. Here is the admin
                 ground truth already gathered in step one — treat it as established fact, do not
                 re-fetch it:
@@ -171,7 +181,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
             """)
     public InvestigationAnswer synthesizeInvestigation(InvestigationQuestion question, AdminSnapshot adminSnapshot,
                                                          MetricsCorrelation metricsCorrelation, Ai ai) {
-        String prompt = systemPrompt + "\n\n" + """
+        String prompt = systemPrompt() + "\n\n" + """
                 You are running the THIRD and FINAL step. Write the Kafka Investigation Report
                 using only the evidence below — do not invent findings not present in either
                 section. Follow the Output Format in the skill above exactly.
@@ -195,6 +205,12 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     public String name() {
         return KafkaInvestigator.class.getSimpleName();
     }
+
+    @Override
+    public String toolName() {
+        return "askInvestigation";
+    }
+
 
     @Override
     public Class<InvestigationAnswer> answerType() {

@@ -100,6 +100,13 @@ public class PromQlQueryTools {
                     if (names.size() < MAX_METRIC_NAMES) names.add(name.asText());
                 }
             }
+            if (names.isEmpty()) {
+                return pattern == null
+                        ? "The metrics store holds no metric names at all."
+                        : "No metric names match '" + match + "'. Do not retry with variations of this pattern: "
+                          + "if even a broad pattern like 'kafka' finds nothing, the store holds no such "
+                          + "series — report that as a finding.";
+            }
             String note = total > names.size()
                     ? "\n(" + total + " metrics match; showing the first " + names.size() + " — use a narrower pattern.)"
                     : "";

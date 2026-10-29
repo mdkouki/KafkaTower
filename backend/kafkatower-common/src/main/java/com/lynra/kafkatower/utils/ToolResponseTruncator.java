@@ -13,6 +13,13 @@ public class ToolResponseTruncator {
 
     private static final Logger log = LoggerFactory.getLogger(ToolResponseTruncator.class);
     public static final int MAX_CHARS = 8_000;
+    /**
+     * Stands in for a blank tool result. Spring AI refuses to build a tool-response message from
+     * empty text ("Text content cannot be empty"), which aborts the whole tool loop and makes the
+     * framework retry the LLM call from scratch — and the model, seeing the same empty result,
+     * walks into the same abort again.
+     */
+    static final String EMPTY_RESULT_NOTICE = "(the tool returned no output)";
     private static final String DEFAULT_ADVICE =
             "Narrow your query with more specific filters or labels to reduce the result set.";
 
@@ -48,6 +55,10 @@ public class ToolResponseTruncator {
      * generic default.
      */
     public static String truncateIfNeeded(String toolName, String response, String advice) {
+        if (response != null && response.isBlank()) {
+            log.warn("Tool '{}' returned a blank response; substituting a placeholder", toolName);
+            return EMPTY_RESULT_NOTICE;
+        }
         if (response == null || response.length() <= MAX_CHARS) return response;
         log.warn("Tool '{}' response truncated: {} chars -> {} chars", toolName, response.length(), MAX_CHARS);
         return response.substring(0, MAX_CHARS)

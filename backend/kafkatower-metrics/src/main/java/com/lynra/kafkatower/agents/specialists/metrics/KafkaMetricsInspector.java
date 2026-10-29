@@ -21,7 +21,9 @@ import org.springframework.beans.factory.annotation.Value;
 @ConditionalOnAssistantEnabled
 @Agent(description = "Answers historical time-series questions about Kafka metrics: " +
         "trends, throughput, consumer lag charts, capacity analysis, and comparisons over a time window. " +
-        "Use this agent when the question asks for a chart, trend, or historical comparison.")
+        "Use this agent when the question asks for a chart, trend, or historical comparison. Also use it to " +
+        "narrow a vague or wide-open timeframe (e.g. find when a lag spike or throughput drop started) " +
+        "before handing a precise window to another agent.")
 public class KafkaMetricsInspector implements Specialist<MetricsQuestion, MetricsAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaMetricsInspector.class);
@@ -30,7 +32,7 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
-    private String systemPrompt;
+    private volatile String sharedGuidance;
 
     public KafkaMetricsInspector(MetricsSkillTools metricsSkillTools,
                                   MetricsBackend metricsBackend,
@@ -50,14 +52,17 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         // Cross-specialist shared guidance (query strategy, reply format, etc.) is NOT loaded
         // here — see applySharedGuidance below.
         basePrompt = SkillLoader.loadContent("/skills/KAFKA_METRICS_INSPECTOR.md");
-        // Until applySharedGuidance runs (after every Specialist bean exists — see the app
-        // module's injector), fall back to the base prompt alone so systemPrompt is never null.
-        systemPrompt = basePrompt;
     }
 
     @Override
     public void applySharedGuidance(String sharedGuidance) {
-        systemPrompt = basePrompt + "\n\n" + sharedGuidance;
+        this.sharedGuidance = sharedGuidance;
+    }
+
+    /** Base skill, plus cross-specialist guidance once {@link #applySharedGuidance} has run. */
+    private String systemPrompt() {
+        String guidance = sharedGuidance;
+        return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
     }
 
     @AchievesGoal(description = "Kafka metrics question answered")
@@ -88,7 +93,7 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         // ordinary tool loop where Unfolding actually works.
         String response = LlmCallTimer.timed(log, "metrics answer", slowCallThresholdMs, () ->
                 ai.withAutoLlm()
-                        .withSystemPrompt(systemPrompt)
+                        .withSystemPrompt(systemPrompt())
                         .withTool(metricsTools)
                         .withToolObject(metricsSkillTools)
                         .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
@@ -101,6 +106,12 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     public String name() {
         return KafkaMetricsInspector.class.getSimpleName();
     }
+
+    @Override
+    public String toolName() {
+        return "askMetrics";
+    }
+
 
     @Override
     public Class<MetricsAnswer> answerType() {

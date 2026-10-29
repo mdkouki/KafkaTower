@@ -47,6 +47,9 @@ class AgentPlatformBootTest {
     @Autowired
     private com.embabel.agent.api.tool.config.ToolLoopConfiguration toolLoopConfiguration;
 
+    @Autowired
+    private com.lynra.kafkatower.agents.core.root.SubAgentTools subAgentTools;
+
     @Test
     void toolLoopRunsInParallelWithTimeoutsLongEnoughForASpecialist() {
         assertThat(toolLoopConfiguration.getType())
@@ -65,6 +68,14 @@ class AgentPlatformBootTest {
         // KafkaLogInspector is intentionally excluded here — it's @ConditionalOnProperty
         // (agent.mcp.os.enabled), off by default, matching this test's environment where no
         // OpenSearch is configured, same as production without that feature turned on.
-        assertThat(names).contains("KafkaInspector", "KafkaMetricsInspector", "KafkaInvestigator");
+        assertThat(names).contains("KafkaInspector", "KafkaMetricsInspector", "KafkaInvestigator", "KafkaRegistryInspector");
+    }
+
+    @Test
+    void everyDeployedSpecialistIsExposedAsATool() {
+        // Injection drives the tool set: each deployed Specialist bean contributes its own tool,
+        // so this fails if a specialist is added without being callable by the root orchestrator.
+        assertThat(subAgentTools.specialistToolNames())
+                .contains("askMetrics", "askInvestigation", "askRegistry");
     }
 }

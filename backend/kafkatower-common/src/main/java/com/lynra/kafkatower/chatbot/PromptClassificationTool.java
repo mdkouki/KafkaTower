@@ -29,7 +29,7 @@ public class PromptClassificationTool {
      * @param keywords    2 to 5 lowercase keywords extracted from the question, comma-separated
      * @param targetAgent name of the specialist(s) judged most relevant for analytics purposes only —
      *                    this does not route: KafkaMetricsInspector, KafkaInvestigator, or
-     *                    KafkaLogInspector
+     *                    KafkaLogInspector, or KafkaRegistryInspector
      */
     public void classifyAndRecord(String theme, String keywords, String targetAgent) {
         // Capture the user here, on the request thread — analyticsService.record runs async on a

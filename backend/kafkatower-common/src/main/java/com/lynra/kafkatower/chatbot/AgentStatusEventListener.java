@@ -90,6 +90,7 @@ public class AgentStatusEventListener implements AgenticEventListener {
             case "KafkaMetricsInspector" -> "analyzing_metrics";
             case "KafkaInvestigator" -> "investigating_cluster";
             case "KafkaLogInspector" -> "searching_logs";
+            case "KafkaRegistryInspector" -> "checking_dependencies";
             default -> agentName.toLowerCase();
         };
     }

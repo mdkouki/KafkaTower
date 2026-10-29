@@ -7,6 +7,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ToolResponseTruncatorTest {
 
     @Test
+    void blankResponseBecomesAPlaceholderSoTheToolLoopIsNotAborted() {
+        assertThat(ToolResponseTruncator.truncateIfNeeded("myTool", "")).isEqualTo("(the tool returned no output)");
+        assertThat(ToolResponseTruncator.truncateIfNeeded("myTool", "  \n")).isEqualTo("(the tool returned no output)");
+    }
+
+    @Test
     void returnsShortResponseUnchanged() {
         String response = "short response";
 

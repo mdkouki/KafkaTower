@@ -436,11 +436,12 @@ services:
       - KMINION_KAFKA_GRANULARITY=topic
       - KMINION_CONSUMER_GROUPS_GRANULARITY=partition
 
-      # SASL Auth — broker requires it now (see config/kafka/init-acls.sh for kminion's ACLs)
-      - KMINION_KAFKA_SASL_ENABLED=true
-      - KMINION_KAFKA_SASL_USERNAME=kminion
-      - KMINION_KAFKA_SASL_PASSWORD=kminion-secret
-      - KMINION_KAFKA_SASL_MECHANISM=PLAIN
+      # SASL Auth — broker requires it now (see config/kafka/init-acls.sh for kminion's ACLs).
+      # KMinion maps unprefixed env names (KAFKA_SASL_*) onto kafka.sasl.*; a KMINION_ prefix is ignored.
+      - KAFKA_SASL_ENABLED=true
+      - KAFKA_SASL_USERNAME=kminion
+      - KAFKA_SASL_PASSWORD=kminion-secret
+      - KAFKA_SASL_MECHANISM=PLAIN
 
 
 

@@ -20,17 +20,11 @@ Check this FIRST, before calling any tool:
 
 ## Specialists
 
-Exposed as tools — each is a separate call to another agent; use only when the answer
-genuinely needs live broker state, historical metrics, or logs:
-- **askMetrics** — historical time-series data: trends, throughput/lag charts, capacity
-  analysis, comparisons over a time window.
-- **askInvestigation** — call this when there's an issue to investigate (a suspected or
-  confirmed problem, anomaly, or an unexplained/contradictory result from another source) or when
-  the user explicitly asks to investigate, troubleshoot, or find a root cause. A plain
-  status/informational question with no such signal doesn't qualify on its own — check askMetrics
-  first; if what comes back is incomplete or doesn't add up, that gap is the issue to investigate.
-- **askLogs** — log and trace search for exceptions, errors, anomalies (may be unavailable
-  if OpenSearch isn't configured).
+Each specialist is a separate call to another agent, exposed as a tool; use one only when the
+answer genuinely needs live broker state, historical metrics, logs, or registry data. Currently
+available: {{SPECIALIST_TOOLS}}. Each tool's own description says when to use it. A specialist
+not in this list is unavailable (e.g. log search needs OpenSearch configured) — say so plainly
+instead of trying to call it.
 
 ## Cluster Name Resolution
 

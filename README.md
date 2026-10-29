@@ -6,7 +6,7 @@
 
 See who can touch what, which topics are alive and whether your consumers keep up. Or just ask: a team of specialist agents queries live cluster state, historical metrics and logs, then cross-checks its own answer before replying.
 
-![KafkaTower assistant](docs/screenshots/06-assistant.png)
+![KafkaTower assistant answering "who is using the topic orders.events"](docs/screenshots/06-assistant-orders-events.png)
 
 </div>
 
@@ -22,9 +22,11 @@ flowchart TD
     R --> K[KafkaInvestigator<br/>live cluster state]
     R --> M[KafkaMetricsInspector<br/>historical metrics]
     R --> L[KafkaLogInspector<br/>logs and traces]
+    R --> REG[KafkaRegistryInspector<br/>dependencies and usage]
     K --> A[Draft answer]
     M --> A
     L --> A
+    REG --> A
     A --> C{Completeness<br/>review}
     C -- gap found --> R
     C -- complete --> G[Secret-leak guardrail] --> Out[Answer, streamed to the chat]
@@ -39,6 +41,7 @@ Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declare
 | **KafkaInvestigator** | Live cluster state | 17 Kafka AdminClient tools: brokers, cluster, topics and configs, partition offsets, consumer groups and lag, ACLs per principal or topic, client quotas |
 | **KafkaMetricsInspector** | Historical time series from any Prometheus-compatible store ([VictoriaMetrics](https://victoriametrics.com/), [Prometheus](https://prometheus.io/), Thanos, Mimir) | `metrics`, `query`, `query_range`, `labels`, `label_values` over the PromQL HTTP API, plus a metrics catalog (Kafka core and extended, KMinion) and playbooks for brokers, topics, consumer groups, principals, cluster health and known failure patterns |
 | **KafkaLogInspector** | Logs and traces ([OpenSearch](https://opensearch.org/)) | `search_documents`, `aggregate_documents`, `get_document` |
+| **KafkaRegistryInspector** | Dependencies and usage from the registry (in-memory topic and ACL graphs per cluster) | `findTopics`, `whoUsesTopic`, `topicConsumerGroups` (live lag), `findPrincipals`, `describePrincipal`, `principalDependencies`: who produces to or consumes from a topic, what a service can access, and what depends on what through shared topics. ACL-based, so it reports what is permitted, not observed traffic |
 
 All tools are read-only. Live-state results are cached for 15–30 s so a multi-step investigation doesn't hammer the brokers.
 
@@ -56,15 +59,40 @@ All tools are read-only. Live-state results are cached for 15–30 s so a multi-
 
 ### Registry: who can do what
 
-Pick any application identity and see which topics it consumes and produces, the consumer groups it owns and the transactional IDs it holds. Literal and prefixed grants are labelled, with live group state next to them. A **Dependencies** tab draws the principal's relationships as a graph.
+The registry is built from the cluster's ACLs, so it shows what each application identity is *allowed* to do. Pick one (here `User:logistics-service`) and you get two views.
 
-![Registry consumer groups](docs/screenshots/03-registry-groups.png)
+**Details** lists what the identity consumes and produces, the consumer groups it owns and the transactional IDs it holds. Literal and prefixed grants are labelled, with live group state next to them.
+
+![Registry details for User:logistics-service](docs/screenshots/08-registry-details.png)
+
+**Dependencies** draws the identity's relationships as a graph. An **upstream** principal (amber) produces to a topic this identity consumes. **Downstream** principals (cyan) consume a topic it produces to. Each link is labelled with the shared topic, or with a topic count when there are several. Here `fulfillment-service` feeds `logistics-service` through `platform.events`, and six principals read what `logistics-service` writes. Click a link to list its topics, click a principal to open it, scroll to zoom and drag to pan. An accessible list view carries the same data.
+
+![Registry dependencies for User:logistics-service](docs/screenshots/09-registry-dependencies.png)
+
+The graph comes from grants, not from observed traffic, so it answers "who may depend on whom". The assistant uses the same data for questions like "who is using the topic `orders.events`".
 
 ### Topics: what exists and who uses it
 
 Browse every topic with its properties, producers and consumers, check consumer-group **lag**, and (as an admin) search the **content** of a topic live. JSON, Avro and protobuf payloads are decoded and streamed back as they match.
 
 ![Topics](docs/screenshots/04-topics.png)
+
+#### Avro and protobuf: decoded with the stored schema
+
+Avro and protobuf records are binary on the wire, so the **Content** tab needs the schema to read them. Upload it once per topic and cluster: an `.avsc` file for Avro, or a protobuf descriptor set (`.desc`) plus the message name, such as `test.Order`. KafkaTower validates the schema on upload, keeps it in its own database, and uses it to decode every record it scans. A record that doesn't match the schema, or a topic with no schema, is shown as plain text and marked as not decoded.
+
+The screenshot shows `test.avro` and `test.protobuf` side by side. Both hold the same `Order` payload as raw bytes; the highlighted **Schema stored** badge is the stored schema turning those bytes into the JSON in the **Value** column. Confluent-framed Avro (magic byte plus schema id) also works, with no schema registry involved.
+
+![test.avro and test.protobuf decoded with their stored schemas](docs/screenshots/07-content-avro-protobuf.png)
+
+To try it, `scripts/produce-test-messages.py` writes random `Order` messages to an existing topic and needs only Python 3 (no packages). It connects to `localhost:9092` as `admin` by default; override with `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_USERNAME`, `KAFKA_PASSWORD`.
+
+```bash
+./scripts/produce-test-messages.py avro     -n 100 -t test.avro
+./scripts/produce-test-messages.py protobuf -n 100 -t test.protobuf
+```
+
+Then upload `scripts/schemas/avro-order.avsc` (Avro) or `scripts/schemas/order.desc` with message name `test.Order` (protobuf) on the topic's **Content** tab.
 
 ### And also
 
@@ -122,13 +150,13 @@ Prefer Prometheus to VictoriaMetrics? `docker compose --profile prometheus up -d
 ### 3. Run
 
 ```bash
-java -jar backend/kafkatower-app/target/kafkatower-app-1.0.0-SNAPSHOT.jar
+java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0-SNAPSHOT.jar
 ```
 
 Without PostgreSQL, run the file-based H2 database next to the jar instead:
 
 ```bash
-java -jar backend/kafkatower-app/target/kafkatower-app-1.0.0-SNAPSHOT.jar --spring.profiles.active=h2
+java -jar backend/kafkatower-app/target/kafkatower-backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=h2
 ```
 
 The database connection can be overridden with `DB_URL`, `DB_USER` and `DB_PASSWORD`.
@@ -157,17 +185,10 @@ Admins configure the Kafka clusters and the integrations from **Settings** (bott
 
 Saving a change applies it right away: the application restarts its Spring context (a few seconds, you sign in again). Saving identical values only re-verifies them and does not restart.
 
-- **The console works without any LLM.** The assistant and the agent platform behind it start only once the LLM tab is complete. Until then the chat shows that the assistant is not configured.
-- **Any model name works.** The model does not need to be listed in `models/openai-models.yml`: the saved model is registered automatically. The id must match what the endpoint reports (for LM Studio, `GET <base URL>/models`).
-- **No clusters in `application.yml`.** The Kafka clusters, the OpenSearch connections and the metrics backend are set only in the console, so a fresh install starts with no cluster until an admin adds one under *Settings → Kafka*.
-- **Certificates are files on the server.** For mTLS, or SASL over TLS, enter the keystore and truststore paths as the application sees them (mount them into the container if you run one). Only the paths and passwords are saved, never the files.
-- **Removing and renaming clusters.** Removing a Kafka cluster deletes its stored data (uploaded topic schemas) when you save. Renaming one keeps the old name's data, which is no longer reachable. The OpenSearch cluster name has to match the Kafka cluster name.
-- **Secrets are write-only.** Stored keys, tokens and passwords show as "set"; leave the field blank to keep the stored value, or use *Remove* to clear it.
-- **Precedence.** Values saved in the panel override matching `application.yml` or environment properties (`kafka.clusters.*`, `agent.mcp.os.*`, `agent.metrics.*`). An older cluster still defined in the yml or an environment variable stays active next to the saved ones, so remove it there.
-- **Storage.** Settings live in the application database (`llm_settings` and `admin_settings`). Secrets are stored in plain text, so restrict access to that database.
-
 ---
 
 ## License
 
-See the repository for license details.
+KafkaTower is free to use, modify and redistribute, including commercially, under the [Apache License 2.0](LICENSE).
+
+If you reuse the code, credit the original project: keep the [LICENSE](LICENSE) and the [NOTICE](NOTICE) file (or its attribution text) with your copy, and mark any files you changed. A link back to [github.com/mdkouki/KafkaTower](https://github.com/mdkouki/KafkaTower) is appreciated.

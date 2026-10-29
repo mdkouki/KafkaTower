@@ -1,0 +1,46 @@
+{
+  "type": "record",
+  "name": "Order",
+  "namespace": "test",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string"
+    },
+    {
+      "name": "customer",
+      "type": "string"
+    },
+    {
+      "name": "amount",
+      "type": "double"
+    },
+    {
+      "name": "quantity",
+      "type": "int"
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "Status",
+        "symbols": [
+          "NEW",
+          "PAID",
+          "SHIPPED"
+        ]
+      }
+    },
+    {
+      "name": "tags",
+      "type": {
+        "type": "array",
+        "items": "string"
+      }
+    },
+    {
+      "name": "created_at",
+      "type": "long"
+    }
+  ]
+}

@@ -24,7 +24,7 @@ import java.util.Set;
 @ConditionalOnAssistantEnabled
 @Agent(description = "Root Kafka assistant orchestrator. Analyzes every question to decide, " +
         "on its own, which specialist(s) to consult — KafkaMetricsInspector (historical metrics), KafkaInvestigator (live " +
-        "state), or KafkaLogInspector (logs/traces) — calling one, several, or none of them, " +
+        "state), KafkaLogInspector (logs/traces), or KafkaRegistryInspector (dependencies and who uses what) — calling one, several, or none of them, " +
         "in any order, and chaining their answers together when a question needs collaboration " +
         "(e.g. narrowing a timeframe via metrics before searching logs for an anomaly). Every " +
         "draft answer is independently reviewed for completeness before being returned, and " +
@@ -62,7 +62,9 @@ public class KafkaInspector {
 
     @PostConstruct
     void loadSkills() {
+        String specialistTools = String.join(", ", subAgentTools.specialistToolNames());
         orchestrationPrompt = SkillLoader.loadContent("/skills/ROOT_ORCHESTRATOR.md")
+                .replace("{{SPECIALIST_TOOLS}}", specialistTools)
                 + "\n\n" + SkillLoader.loadContent("/skills/shared/UNTRUSTED_TOOL_OUTPUT.md");
         completenessCheckPrompt = SkillLoader.loadContent("/skills/ROOT_COMPLETENESS_CHECK.md");
     }
@@ -75,7 +77,7 @@ public class KafkaInspector {
         String gap = null;
         String gapCategory = null;
         String evidenceSnapshot = null;
-        ToolCallEvidenceCollector evidence = new ToolCallEvidenceCollector();
+        ToolCallEvidenceCollector evidence = new ToolCallEvidenceCollector(subAgentTools.specialistToolNames());
         // A per-request wrapper bound directly to `evidence` (not the raw singleton bean) so
         // specialist calls get seeded with prior specialist findings from this same request —
         // see EnrichedSubAgentTools's Javadoc for why this can't be a ThreadLocal instead.
@@ -99,6 +101,7 @@ public class KafkaInspector {
                     ai.withAutoLlm()
                             .withSystemPrompt(orchestrationPrompt)
                             .withToolObject(requestScopedTools)
+                            .withTools(requestScopedTools.specialistTools())
                             .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, evidence)
                             .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
                             .createObject(prompt, String.class));
