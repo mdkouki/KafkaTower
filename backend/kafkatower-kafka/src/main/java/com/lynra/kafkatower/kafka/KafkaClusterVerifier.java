@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 public class KafkaClusterVerifier {
 
     private static final long WAIT_SECONDS = 12;
+    private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(2);
 
     /**
      * @return the number of brokers that answered
@@ -43,7 +44,7 @@ public class KafkaClusterVerifier {
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(describe(e));
         } finally {
-            if (admin != null) admin.close(Duration.ofSeconds(2));
+            if (admin != null) admin.close(CLOSE_TIMEOUT);
         }
     }
 

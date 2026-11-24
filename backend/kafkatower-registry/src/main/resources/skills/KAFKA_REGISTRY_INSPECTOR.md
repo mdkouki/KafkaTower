@@ -17,7 +17,7 @@ metrics, logs or broker health.
   report it and stop, do not guess from memory.
 
 ## Tools
-- `findTopics(cluster, prefix)` — resolve topic names from a prefix (counts of producers and consumers).
+- `findTopics(cluster, regex)` — resolve topic names from a Java regex, unanchored (e.g. `^orders\.`, `\.dlq$`); counts of producers and consumers.
 - `whoUsesTopic(cluster, topic)` — producers and consumers (ACL-based) of one topic.
 - `topicConsumerGroups(cluster, topic)` — LIVE consumer groups with state and lag. It queries
   the brokers and is slow on big clusters: call it only when the question is about actual

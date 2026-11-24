@@ -24,6 +24,8 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 @Service
 @EmbabelComponent
@@ -118,30 +120,39 @@ public class KafkaAdminClientTools {
     // -----------------------------------------------------------------------
 
     @LlmTool(description = """
-            List topic names in the cluster, filtered by prefix. A non-empty prefix is REQUIRED
-            — this tool refuses to list all topics unfiltered, since a large cluster can return
-            thousands of names and flood context. Narrow the prefix based on what the question is
-            actually about instead of listing everything and scanning the result yourself.
+            List topic names in the cluster whose name matches a regex. A non-empty regex is
+            REQUIRED — this tool refuses to list all topics unfiltered, since a large cluster can
+            return thousands of names and flood context. Narrow the regex based on what the
+            question is actually about instead of listing everything and scanning the result yourself.
+            The regex is a Java regular expression applied unanchored (it matches anywhere in the
+            name); anchor it yourself when needed, e.g. "^orders\\." for a prefix, "\\.dlq$" for a
+            suffix, "^(orders|payments)\\..*" for several prefixes.
             Parameter clusterName: name of the Kafka cluster.
-            Parameter prefix: required, non-empty topic name prefix filter.
+            Parameter regex: required, non-empty Java regex matched against topic names.
             """)
     @CachedTool(ttlSeconds = 30)
-    public String listTopics(String clusterName, String prefix) {
-        if (prefix == null || prefix.isBlank()) {
-            log.warn("listTopics rejected for cluster {}: no prefix given", clusterName);
-            return "A non-empty prefix is required — pass the specific topic-name prefix the " +
+    public String listTopics(String clusterName, String regex) {
+        if (regex == null || regex.isBlank()) {
+            log.warn("listTopics rejected for cluster {}: no regex given", clusterName);
+            return "A non-empty regex is required — pass the specific topic-name regex the " +
                     "question is about instead of listing every topic in the cluster.";
+        }
+        Pattern pattern;
+        try {
+            pattern = Pattern.compile(regex);
+        } catch (PatternSyntaxException e) {
+            return "Invalid regex '" + regex + "': " + e.getDescription();
         }
         try {
             Set<String> allTopics = admin(clusterName).listTopics().names().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             List<String> filtered = allTopics.stream()
-                    .filter(t -> t.startsWith(prefix))
+                    .filter(t -> pattern.matcher(t).find())
                     .sorted()
                     .collect(Collectors.toList());
             if (filtered.isEmpty())
-                return "No topics found matching prefix '" + prefix + "' in cluster '" + clusterName + "'.";
+                return "No topics found matching regex '" + regex + "' in cluster '" + clusterName + "'.";
             StringBuilder sb = new StringBuilder("Topics in '").append(clusterName)
-                    .append("' matching prefix '").append(prefix).append("' (").append(filtered.size()).append("):\n");
+                    .append("' matching regex '").append(regex).append("' (").append(filtered.size()).append("):\n");
             filtered.forEach(t -> sb.append("  - ").append(t).append("\n"));
             return sb.toString();
         } catch (Exception e) {
@@ -482,32 +493,40 @@ public class KafkaAdminClientTools {
     // -----------------------------------------------------------------------
 
     @LlmTool(description = """
-            List consumer group IDs in the cluster, filtered by prefix. A non-empty prefix is
+            List consumer group IDs in the cluster whose ID matches a regex. A non-empty regex is
             REQUIRED — this tool refuses to list all groups unfiltered, since a large cluster can
-            return thousands of IDs and flood context. Narrow the prefix based on what the
+            return thousands of IDs and flood context. Narrow the regex based on what the
             question is actually about (a service/team name, a known naming convention) instead
             of listing everything and scanning the result yourself.
+            The regex is a Java regular expression applied unanchored (it matches anywhere in the
+            ID); anchor it yourself when needed, e.g. "^orders-" for a prefix, "-dlq$" for a suffix.
             Parameter clusterName: name of the Kafka cluster.
-            Parameter prefix: required, non-empty prefix filter for group IDs.
+            Parameter regex: required, non-empty Java regex matched against group IDs.
             """)
     @CachedTool(ttlSeconds = 15)
-    public String listConsumerGroups(String clusterName, String prefix) {
-        if (prefix == null || prefix.isBlank()) {
-            log.warn("listConsumerGroups rejected for cluster {}: no prefix given", clusterName);
-            return "A non-empty prefix is required — pass the specific group-ID prefix the " +
+    public String listConsumerGroups(String clusterName, String regex) {
+        if (regex == null || regex.isBlank()) {
+            log.warn("listConsumerGroups rejected for cluster {}: no regex given", clusterName);
+            return "A non-empty regex is required — pass the specific group-ID regex the " +
                     "question is about instead of listing every consumer group in the cluster.";
+        }
+        Pattern pattern;
+        try {
+            pattern = Pattern.compile(regex);
+        } catch (PatternSyntaxException e) {
+            return "Invalid regex '" + regex + "': " + e.getDescription();
         }
         try {
             List<String> groups = admin(clusterName).listConsumerGroups().all()
                     .get(TIMEOUT_SEC, TimeUnit.SECONDS).stream()
                     .map(ConsumerGroupListing::groupId)
-                    .filter(id -> id.startsWith(prefix))
+                    .filter(id -> pattern.matcher(id).find())
                     .sorted()
                     .collect(Collectors.toList());
             if (groups.isEmpty())
-                return "No consumer groups found matching prefix '" + prefix + "' in cluster '" + clusterName + "'.";
+                return "No consumer groups found matching regex '" + regex + "' in cluster '" + clusterName + "'.";
             StringBuilder sb = new StringBuilder("Consumer groups in '").append(clusterName)
-                    .append("' matching prefix '").append(prefix).append("' (").append(groups.size()).append("):\n");
+                    .append("' matching regex '").append(regex).append("' (").append(groups.size()).append("):\n");
             groups.forEach(g -> sb.append("  - ").append(g).append("\n"));
             return sb.toString();
         } catch (Exception e) {

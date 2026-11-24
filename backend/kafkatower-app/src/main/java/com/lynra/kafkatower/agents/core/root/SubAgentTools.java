@@ -23,16 +23,6 @@ import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Exposes each Kafka specialist sub-agent as an LLM-callable tool for {@link KafkaInspector}.
- * This turns delegation from a fixed classify-then-route-once switch into something the root
- * LLM decides at runtime: it can call zero, one, or several specialists, in whatever order it
- * needs, and feed one specialist's answer into another's question (e.g. narrow a timeframe with
- * askMetrics before handing it to askLogs). The specialist tools themselves are built from
- * {@link #specialists()} — see {@link EnrichedSubAgentTools#specialistTools()}.
- * <p>
- * Needs to give this bean per-request state? See {@link EnrichedSubAgentTools} for the pattern.
- */
 @ConditionalOnAssistantEnabled
 @Service
 @EmbabelComponent
@@ -100,11 +90,12 @@ public class SubAgentTools {
             return "No Kafka clusters are configured. There is nothing to query.";
         }
 
-        List<String> ranked = (query == null || query.isBlank())
+        boolean listAll = query == null || query.isBlank();
+        List<String> ranked = listAll
                 ? liveClusters.stream().sorted(String.CASE_INSENSITIVE_ORDER).toList()
                 : rankByMatch(liveClusters, query);
 
-        String header = (query == null || query.isBlank())
+        String header = listAll
                 ? "Available Kafka clusters (" + ranked.size() + "):\n"
                 : "Clusters ranked by similarity to '" + query + "':\n";
 
@@ -144,39 +135,28 @@ public class SubAgentTools {
         return prev[b.length()];
     }
 
-    /** Every specialist Spring deployed; the orchestrator exposes each one as an LLM tool. */
     public List<Specialist<?, ?>> specialists() {
         return specialists;
     }
 
-    /** The tool names of {@link #specialists()}, for telling specialist findings apart from other tool output. */
     public SortedSet<String> specialistToolNames() {
         return specialists.stream().map(Specialist::toolName).collect(Collectors.toCollection(TreeSet::new));
     }
 
-    /**
-     * What the root LLM sees as the tool's description: the specialist's own {@code @Agent}
-     * description, so it is written once, plus how to phrase the {@code question}.
-     */
     public String toolDescription(Specialist<?, ?> specialist) {
         return requireAgent(specialist.name()).getDescription() + "\n\n" + QUESTION_GUIDANCE;
     }
 
-    /** Runs {@code specialist} as an Embabel sub-process and returns its answer text. */
     public <Q, A> String ask(Specialist<Q, A> specialist, String question) {
         Agent agent = requireAgent(specialist.name());
         return run(agent, specialist.question(question), specialist.answerType(), specialist::text);
     }
 
     private <Q, A> String run(Agent agent, Q question, Class<A> answerType, Function<A, String> textOf) {
-        // ProcessOptions.DEFAULT — no per-process listener needed here. AgentStatusEventListener
-        // and AgentPlanLogger are Spring beans that see every process platform-wide already (see
-        // their Javadoc); AgentStatusEventListener scopes itself to the current chat request via
-        // a ThreadLocal, which this sub-process creation naturally participates in since run()
-        // executes synchronously on the calling thread. Never let the specialist's own token
-        // stream reach the browser directly, though: its raw answer is not the synthesized
-        // response the user should see. TokenStreamSink.suppressed keeps full-text collection
-        // working for the specialist's own TokenStreamSink.collect() calls while dropping the
+        // No per-process listener: AgentStatusEventListener and AgentPlanLogger are Spring beans that
+        // already see every process, and the status listener's ThreadLocal covers this synchronous run().
+        // The specialist's raw token stream must not reach the browser (its answer is not the
+        // synthesized response); suppressed() keeps TokenStreamSink.collect() working while dropping
         // per-token forwarding.
         return TokenStreamSink.suppressed(() -> {
             AgentProcess subProcess = agentPlatform.createAgentProcessFrom(agent, ProcessOptions.DEFAULT, question);
@@ -191,12 +171,16 @@ public class SubAgentTools {
                 // cannot be empty) — a specialist producing a blank answer must still surface
                 // something so the tool loop can continue instead of crashing the whole turn.
                 if (text == null || text.isBlank()) {
-                    return "No answer produced by " + agent.getName() + " (see server logs for details).";
+                    return noAnswerMessage(agent);
                 }
                 return text;
             } catch (RuntimeException e) {
-                return "No answer produced by " + agent.getName() + " (see server logs for details).";
+                return noAnswerMessage(agent);
             }
         });
+    }
+
+    private static String noAnswerMessage(Agent agent) {
+        return "No answer produced by " + agent.getName() + " (see server logs for details).";
     }
 }

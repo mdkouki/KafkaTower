@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * The Kafka clusters of the console. Every cluster is verified against its brokers before the
@@ -31,7 +32,9 @@ import java.util.Set;
 public class KafkaSettingsController {
 
     private static final Set<String> SECURITY = Set.of(KafkaSettings.NONE, KafkaSettings.MTLS, KafkaSettings.SASL);
-    private static final Set<String> MECHANISMS = Set.of("PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512");
+    private static final String DEFAULT_SASL_MECHANISM = "PLAIN";
+    private static final Set<String> MECHANISMS = Set.of(DEFAULT_SASL_MECHANISM, "SCRAM-SHA-256", "SCRAM-SHA-512");
+    private static final String DEFAULT_STORE_TYPE = "PKCS12";
 
     private final AdminSettingsStore store;
     private final ApplicationRestarter restarter;
@@ -58,22 +61,44 @@ public class KafkaSettingsController {
     @PutMapping
     public ResponseEntity<SettingsSaveResponse> save(@RequestBody KafkaRequest request) {
         KafkaSettings before = current();
+        List<KafkaSettings.Cluster> clusters = buildClusters(request, before);
+        Set<String> names = clusters.stream().map(KafkaSettings.Cluster::name).collect(Collectors.toSet());
+        KafkaSettings after = new KafkaSettings(clusters);
+
+        boolean unchanged = after.equals(before) && store.read(KafkaSettings.SECTION, KafkaSettings.class).isPresent();
+        int brokers = verifyAll(clusters);
+        List<String> removed = removedNames(request.removedClusters(), names);
+        if (unchanged && removed.isEmpty()) {
+            return ResponseEntity.ok(new SettingsSaveResponse("saved", "Verified. No change.", false));
+        }
+        store.write(KafkaSettings.SECTION, after);
+        removed.forEach(schemas::deleteByClusterName);
+        restarter.restart();
+        return ResponseEntity.ok(new SettingsSaveResponse("saved", savedNote(clusters.size(), brokers, removed), true));
+    }
+
+    private List<KafkaSettings.Cluster> buildClusters(KafkaRequest request, KafkaSettings before) {
         Map<String, KafkaSettings.Cluster> stored = new HashMap<>();
         before.clusters().forEach(c -> stored.put(c.name(), c));
 
         List<KafkaSettings.Cluster> clusters = new ArrayList<>();
         Set<String> names = new HashSet<>();
         for (ClusterInput in : request.clusters() == null ? List.<ClusterInput>of() : request.clusters()) {
-            KafkaSettings.Cluster cluster = build(in, stored.get(nz(in.previousName()).trim().isEmpty()
-                    ? nz(in.name()).trim() : nz(in.previousName()).trim()));
+            KafkaSettings.Cluster cluster = build(in, stored.get(storedNameOf(in)));
             if (!names.add(cluster.name())) {
                 throw invalid("Cluster name '" + cluster.name() + "' is used twice.");
             }
             clusters.add(cluster);
         }
-        KafkaSettings after = new KafkaSettings(clusters);
+        return clusters;
+    }
 
-        boolean unchanged = after.equals(before) && store.read(KafkaSettings.SECTION, KafkaSettings.class).isPresent();
+    private static String storedNameOf(ClusterInput in) {
+        String previousName = nz(in.previousName()).trim();
+        return previousName.isEmpty() ? nz(in.name()).trim() : previousName;
+    }
+
+    private int verifyAll(List<KafkaSettings.Cluster> clusters) {
         int brokers = 0;
         for (KafkaSettings.Cluster c : clusters) {
             try {
@@ -82,17 +107,13 @@ public class KafkaSettingsController {
                 throw invalid("Cluster '" + c.name() + "' (" + c.bootstrapServers() + "): " + e.getMessage());
             }
         }
-        List<String> removed = removedNames(request.removedClusters(), names);
-        if (unchanged && removed.isEmpty()) {
-            return ResponseEntity.ok(new SettingsSaveResponse("saved", "Verified. No change.", false));
-        }
-        store.write(KafkaSettings.SECTION, after);
-        removed.forEach(schemas::deleteByClusterName);
-        restarter.restart();
-        String note = "Verified " + clusters.size() + " cluster(s), " + brokers + " broker(s) answered. "
+        return brokers;
+    }
+
+    private static String savedNote(int clusterCount, int brokers, List<String> removed) {
+        return "Verified " + clusterCount + " cluster(s), " + brokers + " broker(s) answered. "
                 + (removed.isEmpty() ? "" : "Removed the data of: " + String.join(", ", removed) + ". ")
                 + "The application restarts and is back in a few seconds.";
-        return ResponseEntity.ok(new SettingsSaveResponse("saved", note, true));
     }
 
     /** Names the admin deleted (and did not re-add) whose data should go; renamed clusters are not in this list. */
@@ -117,50 +138,51 @@ public class KafkaSettingsController {
         if (!SECURITY.contains(security)) {
             throw invalid("Cluster '" + name + "': security must be NONE, MTLS or SASL.");
         }
-        KafkaSettings.Ssl oldSsl = old != null ? old.ssl() : null;
-        KafkaSettings.Sasl oldSasl = old != null ? old.sasl() : null;
-
-        KafkaSettings.Sasl sasl = null;
-        if (KafkaSettings.SASL.equals(security)) {
-            SaslInput s = in.sasl() == null ? new SaslInput(null, null, null, false) : in.sasl();
-            String mechanism = nz(s.mechanism()).trim().isEmpty() ? "PLAIN" : s.mechanism().trim().toUpperCase();
-            if (!MECHANISMS.contains(mechanism)) {
-                throw invalid("Cluster '" + name + "': SASL mechanism must be PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512.");
-            }
-            String username = nz(s.username()).trim();
-            String password = keep(s.password(), oldSasl != null ? oldSasl.password() : null);
-            if (username.isEmpty() || password.isEmpty()) {
-                throw invalid("Cluster '" + name + "': SASL needs a username and a password.");
-            }
-            sasl = new KafkaSettings.Sasl(mechanism, username, password, Boolean.TRUE.equals(s.tls()));
-        }
-
-        KafkaSettings.Ssl ssl = null;
+        KafkaSettings.Sasl sasl = KafkaSettings.SASL.equals(security)
+                ? buildSasl(name, in.sasl(), old != null ? old.sasl() : null)
+                : null;
         boolean tls = KafkaSettings.MTLS.equals(security) || (sasl != null && sasl.tls());
-        if (tls) {
-            SslInput s = in.ssl() == null ? new SslInput(null, null, null, null, null, null, null) : in.ssl();
-            boolean mtls = KafkaSettings.MTLS.equals(security);
-            ssl = new KafkaSettings.Ssl(
-                    mtls ? nz(s.keystoreLocation()).trim() : "",
-                    mtls ? keep(s.keystorePassword(), oldSsl != null ? oldSsl.keystorePassword() : null) : "",
-                    typeOrDefault(s.keystoreType()),
-                    mtls ? keep(s.keyPassword(), oldSsl != null ? oldSsl.keyPassword() : null) : "",
-                    nz(s.truststoreLocation()).trim(),
-                    keep(s.truststorePassword(), oldSsl != null ? oldSsl.truststorePassword() : null),
-                    typeOrDefault(s.truststoreType()));
-        }
+        KafkaSettings.Ssl ssl = tls
+                ? buildSsl(KafkaSettings.MTLS.equals(security), in.ssl(), old != null ? old.ssl() : null)
+                : null;
         return new KafkaSettings.Cluster(name, bootstrap, security, ssl, sasl);
+    }
+
+    private static KafkaSettings.Sasl buildSasl(String clusterName, SaslInput input, KafkaSettings.Sasl old) {
+        SaslInput s = input == null ? new SaslInput(null, null, null, false) : input;
+        String mechanism = nz(s.mechanism()).trim().isEmpty() ? DEFAULT_SASL_MECHANISM : s.mechanism().trim().toUpperCase();
+        if (!MECHANISMS.contains(mechanism)) {
+            throw invalid("Cluster '" + clusterName + "': SASL mechanism must be PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512.");
+        }
+        String username = nz(s.username()).trim();
+        String password = keep(s.password(), old != null ? old.password() : null);
+        if (username.isEmpty() || password.isEmpty()) {
+            throw invalid("Cluster '" + clusterName + "': SASL needs a username and a password.");
+        }
+        return new KafkaSettings.Sasl(mechanism, username, password, Boolean.TRUE.equals(s.tls()));
+    }
+
+    private static KafkaSettings.Ssl buildSsl(boolean mtls, SslInput input, KafkaSettings.Ssl old) {
+        SslInput s = input == null ? new SslInput(null, null, null, null, null, null, null) : input;
+        return new KafkaSettings.Ssl(
+                mtls ? nz(s.keystoreLocation()).trim() : "",
+                mtls ? keep(s.keystorePassword(), old != null ? old.keystorePassword() : null) : "",
+                typeOrDefault(s.keystoreType()),
+                mtls ? keep(s.keyPassword(), old != null ? old.keyPassword() : null) : "",
+                nz(s.truststoreLocation()).trim(),
+                keep(s.truststorePassword(), old != null ? old.truststorePassword() : null),
+                typeOrDefault(s.truststoreType()));
     }
 
     private static ClusterView view(KafkaSettings.Cluster c) {
         KafkaSettings.Ssl ssl = c.ssl();
         KafkaSettings.Sasl sasl = c.sasl();
         return new ClusterView(c.name(), c.bootstrapServers(), c.security(),
-                new SslView(ssl == null ? "" : nz(ssl.keystoreLocation()), ssl == null ? "PKCS12" : typeOrDefault(ssl.keystoreType()),
+                new SslView(ssl == null ? "" : nz(ssl.keystoreLocation()), ssl == null ? DEFAULT_STORE_TYPE : typeOrDefault(ssl.keystoreType()),
                         ssl != null && set(ssl.keystorePassword()), ssl != null && set(ssl.keyPassword()),
-                        ssl == null ? "" : nz(ssl.truststoreLocation()), ssl == null ? "PKCS12" : typeOrDefault(ssl.truststoreType()),
+                        ssl == null ? "" : nz(ssl.truststoreLocation()), ssl == null ? DEFAULT_STORE_TYPE : typeOrDefault(ssl.truststoreType()),
                         ssl != null && set(ssl.truststorePassword())),
-                new SaslView(sasl == null ? "PLAIN" : nz(sasl.mechanism()), sasl == null ? "" : nz(sasl.username()),
+                new SaslView(sasl == null ? DEFAULT_SASL_MECHANISM : nz(sasl.mechanism()), sasl == null ? "" : nz(sasl.username()),
                         sasl != null && set(sasl.password()), sasl != null && sasl.tls()));
     }
 
@@ -170,7 +192,7 @@ public class KafkaSettingsController {
     }
 
     private static String typeOrDefault(String type) {
-        return type == null || type.isBlank() ? "PKCS12" : type.trim().toUpperCase();
+        return type == null || type.isBlank() ? DEFAULT_STORE_TYPE : type.trim().toUpperCase();
     }
 
     private static ResponseStatusException invalid(String message) {

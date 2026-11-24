@@ -1,8 +1,14 @@
 package com.lynra.kafkatower.utils;
 
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.Signature;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ToolResponseTruncatorTest {
 
@@ -39,5 +45,36 @@ class ToolResponseTruncatorTest {
     @Test
     void returnsNullUnchanged() {
         assertThat(ToolResponseTruncator.truncateIfNeeded("myTool", null)).isNull();
+    }
+
+    @Test
+    void usesCallerSuppliedAdviceInTheTruncationNotice() {
+        String response = "a".repeat(ToolResponseTruncator.MAX_CHARS + 1);
+
+        String result = ToolResponseTruncator.truncateIfNeeded("myTool", response, "Use a shorter window.");
+
+        assertThat(result).endsWith("Use a shorter window.]");
+    }
+
+    @Test
+    void aspectTruncatesStringResultsOfInterceptedTools() throws Throwable {
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        Signature signature = mock(Signature.class);
+        when(signature.getName()).thenReturn("myTool");
+        when(joinPoint.getSignature()).thenReturn(signature);
+        when(joinPoint.proceed()).thenReturn("a".repeat(ToolResponseTruncator.MAX_CHARS + 1));
+
+        Object result = new ToolResponseTruncator().truncateToolResponse(joinPoint);
+
+        assertThat((String) result).contains("[TRUNCATED:");
+    }
+
+    @Test
+    void aspectLeavesNonStringResultsUntouched() throws Throwable {
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        List<String> typedResult = List.of("a");
+        when(joinPoint.proceed()).thenReturn(typedResult);
+
+        assertThat(new ToolResponseTruncator().truncateToolResponse(joinPoint)).isSameAs(typedResult);
     }
 }

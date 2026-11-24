@@ -44,13 +44,8 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
 
     @PostConstruct
     void loadSkill() {
-        // KAFKA_METRICS_INSPECTOR.md is a self-contained step-by-step workflow with its own
-        // embedded PromQL for the common case (this agent has no AdminClient tools, so most of
-        // the full investigation playbook — written for KafkaInvestigator's admin+metrics
-        // workflow — doesn't apply here anyway). The metrics catalog is fetched on demand via
-        // MetricsSkillTools.getMetricsCatalog(category) instead of being concatenated whole.
-        // Cross-specialist shared guidance (query strategy, reply format, etc.) is NOT loaded
-        // here — see applySharedGuidance below.
+        // The metrics catalog is fetched on demand via MetricsSkillTools.getMetricsCatalog; shared
+        // guidance is injected later through applySharedGuidance.
         basePrompt = SkillLoader.loadContent("/skills/KAFKA_METRICS_INSPECTOR.md");
     }
 
@@ -59,7 +54,6 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         this.sharedGuidance = sharedGuidance;
     }
 
-    /** Base skill, plus cross-specialist guidance once {@link #applySharedGuidance} has run. */
     private String systemPrompt() {
         String guidance = sharedGuidance;
         return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
@@ -111,7 +105,6 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     public String toolName() {
         return "askMetrics";
     }
-
 
     @Override
     public Class<MetricsAnswer> answerType() {

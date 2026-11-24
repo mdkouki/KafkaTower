@@ -4,6 +4,7 @@ import com.embabel.agent.api.annotation.EmbabelComponent;
 import com.embabel.agent.api.annotation.LlmTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientProvider;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
 import org.slf4j.Logger;
@@ -11,28 +12,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.lynra.kafkatower.utils.CachedTool;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-/**
- * Queries OpenSearch directly over its REST API, authenticating with HTTP basic auth
- * (login/password) — used instead of OpenSearch's native MCP server because the OpenSearch
- * version deployed here does not support it. Each Kafka cluster has its own OpenSearch
- * connection (see {@link OpenSearchClientRegistry}), targeting the index configured for
- * that cluster unless the caller names a different one.
- *
- * <p>Exposes three tools split by shape of the work, so the LLM reaches for the cheapest
- * one that answers the question rather than always paying for a full document search:
- * {@code search_documents} (raw document hits), {@code aggregate_documents} (buckets/counts
- * only, hits always suppressed), and {@code get_document} (a single document by id).
- */
 @Service
 @EmbabelComponent
 // See KafkaLogInspector for why this uses the deterministic property condition rather than
 // @ConditionalOnBean on a regular scanned @Component.
+// Talks to the REST API directly (basic auth) because the deployed OpenSearch version has no native MCP server.
 @ConditionalOnProperty(prefix = "agent.mcp.os", name = "enabled", havingValue = "true")
 public class OpenSearchQueryTools {
 
     private static final Logger log = LoggerFactory.getLogger(OpenSearchQueryTools.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String ERROR_PREFIX = "Error: ";
 
     private final OpenSearchClientRegistry registry;
 
@@ -45,9 +37,14 @@ public class OpenSearchQueryTools {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown OpenSearch cluster: " + clusterName));
     }
 
+    private Target resolveTarget(String clusterName, String index) {
+        OpenSearchClientProvider provider = provider(clusterName);
+        return new Target(provider, resolveIndex(provider, index));
+    }
+
     private String resolveIndex(OpenSearchClientProvider provider, String index) {
-        if (index != null && !index.isBlank()) return index;
-        if (provider.defaultIndex() != null && !provider.defaultIndex().isBlank()) return provider.defaultIndex();
+        if (StringUtils.hasText(index)) return index;
+        if (StringUtils.hasText(provider.defaultIndex())) return provider.defaultIndex();
         throw new IllegalArgumentException("No index specified and no default index configured for cluster '" +
                 provider.clusterName() + "'.");
     }
@@ -63,26 +60,26 @@ public class OpenSearchQueryTools {
             """)
     @CachedTool(ttlSeconds = 20)
     public String searchDocuments(String clusterName, String index, String queryJson) {
-        OpenSearchClientProvider provider;
-        String target;
+        Target resolved;
         try {
-            provider = provider(clusterName);
-            target = resolveIndex(provider, index);
+            resolved = resolveTarget(clusterName, index);
         } catch (Exception e) {
             log.error("searchDocuments rejected before dispatch for cluster {}: {}", clusterName, e.getMessage());
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
+        OpenSearchClientProvider provider = resolved.provider();
+        String target = resolved.index();
 
         log.info("searchDocuments OS query cluster={} index={} query={}", clusterName, target, queryJson);
         try {
-            String responseBody = provider.post("/" + target + "/_search", queryJson);
+            String responseBody = provider.post(searchPath(target), queryJson);
             log.info("searchDocuments OS result cluster={} index={} status=ok {}",
                     clusterName, target, describeResult(responseBody));
             return slimForLlm(responseBody);
         } catch (Exception e) {
             log.error("searchDocuments OS result cluster={} index={} status=failed error={}",
                     clusterName, target, e.getMessage(), e);
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
     }
 
@@ -99,34 +96,34 @@ public class OpenSearchQueryTools {
             """)
     @CachedTool(ttlSeconds = 20)
     public String aggregateDocuments(String clusterName, String index, String queryJson) {
-        OpenSearchClientProvider provider;
-        String target;
+        Target resolved;
         try {
-            provider = provider(clusterName);
-            target = resolveIndex(provider, index);
+            resolved = resolveTarget(clusterName, index);
         } catch (Exception e) {
             log.error("aggregateDocuments rejected before dispatch for cluster {}: {}", clusterName, e.getMessage());
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
+        OpenSearchClientProvider provider = resolved.provider();
+        String target = resolved.index();
 
         String body;
         try {
             body = forceNoHits(queryJson);
         } catch (Exception e) {
             log.error("aggregateDocuments rejected malformed queryJson for cluster {}: {}", clusterName, e.getMessage());
-            return "Error: invalid queryJson: " + e.getMessage();
+            return ERROR_PREFIX + "invalid queryJson: " + e.getMessage();
         }
 
         log.info("aggregateDocuments OS query cluster={} index={} query={}", clusterName, target, body);
         try {
-            String responseBody = provider.post("/" + target + "/_search", body);
+            String responseBody = provider.post(searchPath(target), body);
             log.info("aggregateDocuments OS result cluster={} index={} status=ok {}",
                     clusterName, target, describeResult(responseBody));
             return slimAggregationForLlm(responseBody);
         } catch (Exception e) {
             log.error("aggregateDocuments OS result cluster={} index={} status=failed error={}",
                     clusterName, target, e.getMessage(), e);
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
     }
 
@@ -141,15 +138,15 @@ public class OpenSearchQueryTools {
             """)
     @CachedTool(ttlSeconds = 30)
     public String getDocument(String clusterName, String index, String documentId) {
-        OpenSearchClientProvider provider;
-        String target;
+        Target resolved;
         try {
-            provider = provider(clusterName);
-            target = resolveIndex(provider, index);
+            resolved = resolveTarget(clusterName, index);
         } catch (Exception e) {
             log.error("getDocument rejected before dispatch for cluster {}: {}", clusterName, e.getMessage());
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
+        OpenSearchClientProvider provider = resolved.provider();
+        String target = resolved.index();
 
         log.info("getDocument OS lookup cluster={} index={} id={}", clusterName, target, documentId);
         try {
@@ -159,22 +156,24 @@ public class OpenSearchQueryTools {
         } catch (Exception e) {
             log.error("getDocument OS result cluster={} index={} id={} status=failed error={}",
                     clusterName, target, documentId, e.getMessage(), e);
-            return "Error: " + e.getMessage();
+            return ERROR_PREFIX + e.getMessage();
         }
     }
 
-    /** Forces size:0 (hits suppressed) on a caller-supplied aggregation request body. */
+    private static String searchPath(String index) {
+        return "/" + index + "/_search";
+    }
+
     private static String forceNoHits(String queryJson) throws Exception {
         JsonNode root = MAPPER.readTree(queryJson);
         if (!root.isObject()) {
             throw new IllegalArgumentException("queryJson must be a JSON object");
         }
-        var obj = (com.fasterxml.jackson.databind.node.ObjectNode) root;
+        var obj = (ObjectNode) root;
         obj.put("size", 0);
         return MAPPER.writeValueAsString(obj);
     }
 
-    /** Keeps only aggregations and the total hit count — no per-document hits. */
     private static String slimAggregationForLlm(String responseBody) {
         try {
             JsonNode root = MAPPER.readTree(responseBody);
@@ -190,7 +189,6 @@ public class OpenSearchQueryTools {
         }
     }
 
-    /** Keeps only _source from a GET /{index}/_doc/{id} response. */
     private static String slimDocumentForLlm(String responseBody) {
         try {
             JsonNode root = MAPPER.readTree(responseBody);
@@ -201,19 +199,13 @@ public class OpenSearchQueryTools {
         }
     }
 
-    /**
-     * Strips OpenSearch response envelope fields the LLM never needs (`took`, `timed_out`,
-     * `_shards`, and per-hit `_index`/`_type`/`_score`) before the response is handed back to
-     * the model. This is pure boilerplate on every call — cutting it leaves more of the
-     * {@link com.lynra.kafkatower.utils.ToolResponseTruncator} 8k-char budget for actual
-     * `_source` content and aggregation buckets. Falls back to the untouched body if the
-     * response isn't the JSON shape we expect (e.g. an OpenSearch error body).
-     */
+    // Dropping the envelope fields leaves more of the ToolResponseTruncator 8k-char budget for _source
+    // content and aggregation buckets; non-JSON bodies (e.g. OpenSearch errors) are returned untouched.
     private static String slimForLlm(String responseBody) {
         try {
             JsonNode root = MAPPER.readTree(responseBody);
             if (!root.isObject()) return responseBody;
-            var obj = (com.fasterxml.jackson.databind.node.ObjectNode) root;
+            var obj = (ObjectNode) root;
             obj.remove("took");
             obj.remove("timed_out");
             obj.remove("_shards");
@@ -221,7 +213,7 @@ public class OpenSearchQueryTools {
             if (hits.isArray()) {
                 for (JsonNode hit : hits) {
                     if (hit.isObject()) {
-                        var hitObj = (com.fasterxml.jackson.databind.node.ObjectNode) hit;
+                        var hitObj = (ObjectNode) hit;
                         hitObj.remove("_index");
                         hitObj.remove("_type");
                         hitObj.remove("_score");
@@ -234,7 +226,6 @@ public class OpenSearchQueryTools {
         }
     }
 
-    /** Summarizes a raw OpenSearch _search response for logging: hit count and whether aggregations were returned. */
     private static String describeResult(String responseBody) {
         try {
             JsonNode root = MAPPER.readTree(responseBody);
@@ -248,4 +239,6 @@ public class OpenSearchQueryTools {
             return "empty=unknown (failed to parse response: " + parseError.getMessage() + ")";
         }
     }
+
+    private record Target(OpenSearchClientProvider provider, String index) {}
 }

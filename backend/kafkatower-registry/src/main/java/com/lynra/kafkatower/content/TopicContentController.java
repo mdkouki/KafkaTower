@@ -37,6 +37,7 @@ public class TopicContentController {
 
     private static final Logger log = LoggerFactory.getLogger(TopicContentController.class);
     private static final long MAX_SCHEMA_BYTES = 1024 * 1024;
+    private static final long NO_TIMEOUT = 0L;
 
     public record SchemaInfo(ContentFormat format, String messageName, Instant updatedAt) {
         static SchemaInfo of(TopicSchema s) {
@@ -71,7 +72,7 @@ public class TopicContentController {
         ContentFormat format = req.format() == null ? ContentFormat.STRING : req.format();
         PayloadDecoder decoder = decoderFor(req, format);
 
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(NO_TIMEOUT);
         AtomicBoolean cancelled = new AtomicBoolean();
         emitter.onCompletion(() -> cancelled.set(true));
         emitter.onTimeout(() -> cancelled.set(true));
@@ -127,7 +128,7 @@ public class TopicContentController {
                 : Base64.getEncoder().encodeToString(bytes);
         TopicSchema schema = new TopicSchema(clusterName, topic, format, messageName, content);
         try {
-            PayloadDecoder.create(format, schema); // reject unusable schemas up front
+            PayloadDecoder.create(format, schema);
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }

@@ -54,7 +54,6 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
         this.sharedGuidance = sharedGuidance;
     }
 
-    /** Base skill, plus cross-specialist guidance once {@link #applySharedGuidance} has run. */
     private String systemPrompt() {
         String guidance = sharedGuidance;
         return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
@@ -88,7 +87,6 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
     public String toolName() {
         return "askRegistry";
     }
-
 
     @Override
     public Class<RegistryAnswer> answerType() {

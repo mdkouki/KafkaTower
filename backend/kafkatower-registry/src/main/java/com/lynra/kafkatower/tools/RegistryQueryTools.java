@@ -24,6 +24,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Read-only LLM tools over the registry: the in-memory topic and ACL graphs that
@@ -51,28 +53,37 @@ public class RegistryQueryTools {
     }
 
     @LlmTool(description = """
-            Find topics in the registry whose name starts with a prefix, with how many principals
-            produce to and consume from each. A non-empty prefix is REQUIRED.
+            Find topics in the registry whose name matches a regex, with how many principals
+            produce to and consume from each. A non-empty regex is REQUIRED.
+            The regex is a Java regular expression applied unanchored (it matches anywhere in the
+            name); anchor it yourself when needed, e.g. "^orders\\." for a prefix, "\\.dlq$" for a
+            suffix, "^(orders|payments)\\..*" for several prefixes.
             Parameter clusterName: name of the Kafka cluster.
-            Parameter prefix: required, non-empty topic-name prefix.
+            Parameter regex: required, non-empty Java regex matched against topic names.
             """)
-    public String findTopics(String clusterName, String prefix) {
-        if (prefix == null || prefix.isBlank()) {
-            return "A non-empty prefix is required — pass the topic-name prefix the question is about.";
+    public String findTopics(String clusterName, String regex) {
+        if (regex == null || regex.isBlank()) {
+            return "A non-empty regex is required — pass the topic-name regex the question is about.";
+        }
+        Pattern pattern;
+        try {
+            pattern = Pattern.compile(regex);
+        } catch (PatternSyntaxException e) {
+            return "Invalid regex '" + regex + "': " + e.getDescription();
         }
         return withTopicGraph(clusterName, graph -> {
             List<TopicDetail> matches = graph.topicsByName().values().stream()
-                    .filter(t -> t.name().startsWith(prefix))
+                    .filter(t -> pattern.matcher(t.name()).find())
                     .sorted(Comparator.comparing(TopicDetail::name))
                     .toList();
-            if (matches.isEmpty()) return "No topics start with '" + prefix + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Topics starting with '").append(prefix).append("' in '")
+            if (matches.isEmpty()) return "No topics match regex '" + regex + "' in cluster '" + clusterName + "'.";
+            StringBuilder sb = new StringBuilder("Topics matching regex '").append(regex).append("' in '")
                     .append(clusterName).append("' (").append(matches.size()).append("):\n");
             matches.stream().limit(MAX_ROWS).forEach(t -> sb.append("  ").append(t.name())
                     .append("  producers=").append(t.producers().size())
                     .append(" consumers=").append(t.consumers().size()).append("\n"));
             if (matches.size() > MAX_ROWS) sb.append("  ... ").append(matches.size() - MAX_ROWS)
-                    .append(" more — use a longer prefix.\n");
+                    .append(" more — use a narrower regex.\n");
             return sb.toString();
         });
     }
@@ -87,7 +98,7 @@ public class RegistryQueryTools {
         return withTopicGraph(clusterName, graph -> {
             TopicDetail t = graph.topicsByName().get(topic);
             if (t == null) return "Topic '" + topic + "' is not in the registry for cluster '" + clusterName
-                    + "'. Use findTopics with a prefix to find the exact name.";
+                    + "'. Use findTopics with a regex to find the exact name.";
             return "Topic '" + t.name() + "' on '" + clusterName + "': " + t.partitionCount() + " partitions, RF "
                     + t.replicationFactor() + (t.internal() ? ", internal" : "") + "\n"
                     + "  producers (" + t.producers().size() + "): " + joined(t.producers()) + "\n"

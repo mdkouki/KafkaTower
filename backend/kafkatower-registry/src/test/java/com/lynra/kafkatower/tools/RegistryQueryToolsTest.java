@@ -45,14 +45,24 @@ class RegistryQueryToolsTest {
     }
 
     @Test
-    void findTopicsRequiresAPrefix() {
-        assertThat(tools.findTopics("prod", " ")).contains("prefix is required");
+    void findTopicsRequiresARegex() {
+        assertThat(tools.findTopics("prod", " ")).contains("regex is required");
     }
 
     @Test
     void findTopicsListsMatchesWithCounts() {
-        assertThat(tools.findTopics("prod", "orders.e")).contains("orders.events").contains("producers=1 consumers=2")
+        assertThat(tools.findTopics("prod", "^orders\\.e")).contains("orders.events").contains("producers=1 consumers=2")
                 .doesNotContain("orders.dlq");
+    }
+
+    @Test
+    void findTopicsRegexCoversSuffixes() {
+        assertThat(tools.findTopics("prod", "\\.dlq$")).contains("orders.dlq").doesNotContain("orders.events");
+    }
+
+    @Test
+    void findTopicsReportsInvalidRegex() {
+        assertThat(tools.findTopics("prod", "orders.(")).startsWith("Invalid regex 'orders.('");
     }
 
     @Test

@@ -9,16 +9,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * On-demand lookups for the Kafka investigation/metrics reference material that used to be
- * concatenated wholesale into KafkaInvestigator's and KafkaMetricsInspector's system prompts
- * (~10K tokens of promql-snippets.md + metrics-catalog.md on every single call, regardless of
- * whether the question needed it). Both specialists now load only their small always-relevant
- * core prompt and pull in the rest through these tools, scoped to what the question actually
- * needs — see KafkaInvestigator.loadSkill / KafkaMetricsInspector.loadSkill.
- * <p>
- * Content is loaded once per key at construction (this bean is a singleton) rather than re-read
- * from the classpath on every tool call, since the LLM tool loop can call these repeatedly
- * within — and across — conversations.
+ * On-demand lookups for the investigation playbooks and metrics catalog, so specialists load only
+ * their small core prompt and fetch the rest per question. Content is loaded once at construction
+ * because the LLM tool loop calls these repeatedly.
  */
 @Service
 @EmbabelComponent

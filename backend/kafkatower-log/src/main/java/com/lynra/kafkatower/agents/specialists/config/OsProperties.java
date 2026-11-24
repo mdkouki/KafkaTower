@@ -5,12 +5,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Binds {@code agent.mcp.os.*} — one direct OpenSearch REST connection per Kafka cluster.
- * Replaces the earlier MCP-based integration: the OpenSearch version in use here does not
- * support the native MCP server, so {@link com.lynra.kafkatower.tools.OpenSearchQueryTools}
- * talks to the REST API directly, authenticating with basic auth.
- */
 @ConfigurationProperties(prefix = "agent.mcp.os")
 public class OsProperties {
 
@@ -46,7 +40,6 @@ public class OsProperties {
         private String url;
         private String username;
         private String password;
-        /** Default index (or index pattern, e.g. {@code app-logs-*}) queried for this cluster. */
         private String index;
 
         public String getUrl() {

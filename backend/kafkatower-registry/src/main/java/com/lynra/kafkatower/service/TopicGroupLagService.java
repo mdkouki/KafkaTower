@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Live consumer-group lag for one topic, shared by the topics REST endpoint and the registry
@@ -33,17 +34,22 @@ public class TopicGroupLagService {
     public List<TopicGroupLag> groupsForTopic(String clusterName, String topic) {
         return groupService.getAllGroupIds(clusterName).stream()
                 .map(id -> groupState(id, clusterName))
-                .filter(g -> g != null)
-                .filter(g -> g.partitionLags().stream().anyMatch(pl -> pl.topic().equals(topic)))
-                .map(g -> new TopicGroupLag(
-                        g.groupId(),
-                        g.state(),
-                        g.partitionLags().stream()
-                                .filter(pl -> pl.topic().equals(topic))
-                                .mapToLong(pl -> Math.max(0, pl.lag()))
-                                .sum()))
+                .filter(Objects::nonNull)
+                .filter(group -> consumesTopic(group, topic))
+                .map(group -> new TopicGroupLag(group.groupId(), group.state(), lagOnTopic(group, topic)))
                 .sorted(Comparator.comparing(TopicGroupLag::groupId))
                 .toList();
+    }
+
+    private boolean consumesTopic(GroupInfo group, String topic) {
+        return group.partitionLags().stream().anyMatch(lag -> lag.topic().equals(topic));
+    }
+
+    private long lagOnTopic(GroupInfo group, String topic) {
+        return group.partitionLags().stream()
+                .filter(lag -> lag.topic().equals(topic))
+                .mapToLong(lag -> Math.max(0, lag.lag()))
+                .sum();
     }
 
     private GroupInfo groupState(String groupId, String clusterName) {

@@ -21,18 +21,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
-import java.util.Optional;
 import java.util.Set;
 
-/**
- * Queries OpenSearch logs for anomalies and distributed traces. Each Kafka cluster has its
- * own OpenSearch connection (see {@link OpenSearchClientRegistry}), so the target cluster is
- * resolved from the question before the query tools are invoked. Talks to OpenSearch's REST
- * API directly with HTTP basic auth ({@link OpenSearchQueryTools}) rather than via MCP — the
- * OpenSearch version deployed here does not support the native MCP server.
- * Disabled by default — activate by setting agent.mcp.os.enabled=true and at least one
- * entry under agent.mcp.os.clusters.
- */
 // @ConditionalOnBean is only well-defined on auto-configuration classes; on a regular scanned
 // @Component like OpenSearchClientRegistry its evaluation order relative to registry
 // registration is undefined, so this agent's own presence could vary by classpath scan order.
@@ -62,8 +52,6 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
 
     @PostConstruct
     void loadSkill() {
-        // Cross-specialist shared guidance (tool-output handling, query strategy, reply format)
-        // is NOT loaded here — see applySharedGuidance below.
         basePrompt = SkillLoader.loadContent("/skills/KAFKA_LOG_INSPECTOR.md");
     }
 
@@ -72,20 +60,14 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         this.sharedGuidance = sharedGuidance;
     }
 
-    /** Base skill, plus cross-specialist guidance once {@link #applySharedGuidance} has run. */
     private String systemPrompt() {
         String guidance = sharedGuidance;
         return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
     }
 
-    /**
-     * Resolves the target OpenSearch cluster before any log query is issued. The two
-     * unavailability checks that used to live at the top of {@code answer()} are handled here
-     * via {@link SpecialReturnException}: throwing one with {@code type = LogAnswer.class} makes
-     * the framework place that {@link LogAnswer} directly on the blackboard, which already
-     * satisfies {@link #searchLogs}'s {@code @AchievesGoal} — so the plan ends here instead of
-     * proceeding to {@code searchLogs}, without a second real LLM call ever running.
-     */
+    // Throwing a SpecialReturnException with type = LogAnswer.class makes the framework place that
+    // LogAnswer directly on the blackboard, which already satisfies searchLogs's @AchievesGoal — so
+    // the plan ends here without a second LLM call ever running.
     @Action(description = "Resolve which OpenSearch-backed Kafka cluster a log/trace question is about.")
     public ResolvedCluster resolveLogCluster(LogQuestion question, Ai ai) {
         log.info("Log inspection request: \"{}\"", question.text());
@@ -148,7 +130,6 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         return new LogAnswer(prefix + response);
     }
 
-    /** Precondition: registry has at least one configured cluster (checked by the caller). */
     private ResolvedCluster resolveCluster(String questionText, Ai ai) {
         Set<String> clusters = registry.clusterNames();
         if (clusters.size() == 1) {
@@ -157,18 +138,7 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
             return new ResolvedCluster(registry.forCluster(only).orElseThrow(), null);
         }
 
-        String defaultHint = registry.defaultCluster()
-                .map(c -> "If the question does not name a cluster, assume '" + c + "'.")
-                .orElse("If the question does not name a cluster, pick the most likely one from context; " +
-                        "if truly ambiguous, return the first cluster alphabetically.");
-
-        String prompt = """
-                Identify which Kafka cluster this log/trace question is about.
-                Valid clusters: %s
-                %s
-                Respond with exactly one of the valid cluster names.
-                """.formatted(String.join(", ", clusters), defaultHint);
-
+        String prompt = clusterSelectionPrompt(clusters);
         ClusterSelection selection = LlmCallTimer.timed(log, "cluster selection", slowCallThresholdMs, () ->
                 ai.withAutoLlm()
                         .withSystemPrompt(prompt)
@@ -176,18 +146,34 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         log.debug("Cluster selection for log inspection: LLM picked '{}' from candidates {}",
                 selection.clusterName(), clusters);
 
-        Optional<OpenSearchClientProvider> resolved = registry.forCluster(selection.clusterName());
-        if (resolved.isEmpty()) {
-            String fallback = clusters.iterator().next();
-            log.warn("Cluster selection picked '{}', which has no matching OpenSearch connection " +
-                            "among configured clusters {} — falling back to '{}'. This usually means the " +
-                            "configured agent.mcp.os.clusters key doesn't match the cluster name the user used.",
-                    selection.clusterName(), clusters, fallback);
-            String note = "cluster '" + selection.clusterName() + "' is not configured for logs; searched '"
-                    + fallback + "' instead";
-            return new ResolvedCluster(registry.forCluster(fallback).orElseThrow(), note);
-        }
-        return new ResolvedCluster(resolved.get(), null);
+        return registry.forCluster(selection.clusterName())
+                .map(provider -> new ResolvedCluster(provider, null))
+                .orElseGet(() -> fallbackToFirstCluster(selection.clusterName(), clusters));
+    }
+
+    private String clusterSelectionPrompt(Set<String> clusters) {
+        String defaultHint = registry.defaultCluster()
+                .map(c -> "If the question does not name a cluster, assume '" + c + "'.")
+                .orElse("If the question does not name a cluster, pick the most likely one from context; " +
+                        "if truly ambiguous, return the first cluster alphabetically.");
+
+        return """
+                Identify which Kafka cluster this log/trace question is about.
+                Valid clusters: %s
+                %s
+                Respond with exactly one of the valid cluster names.
+                """.formatted(String.join(", ", clusters), defaultHint);
+    }
+
+    private ResolvedCluster fallbackToFirstCluster(String requestedCluster, Set<String> clusters) {
+        String fallback = clusters.iterator().next();
+        log.warn("Cluster selection picked '{}', which has no matching OpenSearch connection " +
+                        "among configured clusters {} — falling back to '{}'. This usually means the " +
+                        "configured agent.mcp.os.clusters key doesn't match the cluster name the user used.",
+                requestedCluster, clusters, fallback);
+        String note = "cluster '" + requestedCluster + "' is not configured for logs; searched '"
+                + fallback + "' instead";
+        return new ResolvedCluster(registry.forCluster(fallback).orElseThrow(), note);
     }
 
     @Override
@@ -199,7 +185,6 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
     public String toolName() {
         return "askLogs";
     }
-
 
     @Override
     public Class<LogAnswer> answerType() {

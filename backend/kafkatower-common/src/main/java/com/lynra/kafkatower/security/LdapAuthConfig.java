@@ -4,22 +4,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.ldap.core.support.LdapContextSource;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.authority.mapping.GrantedAuthoritiesMapper;
 import org.springframework.security.ldap.authentication.BindAuthenticator;
 import org.springframework.security.ldap.authentication.LdapAuthenticationProvider;
 import org.springframework.security.ldap.search.FilterBasedLdapUserSearch;
 import org.springframework.security.ldap.userdetails.DefaultLdapAuthoritiesPopulator;
 import org.springframework.util.StringUtils;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Configuration
 @ConditionalOnProperty(name = "app.security.mode", havingValue = "ldap")
@@ -41,7 +32,7 @@ public class LdapAuthConfig {
         contextSource.setPooled(false);
 
         if (securityProperties.getLdap().isSslNoVerify()) {
-            contextSource.setBaseEnvironmentProperties(java.util.Map.of(
+            contextSource.setBaseEnvironmentProperties(Map.of(
                     "java.naming.ldap.factory.socket", TrustAllSslSocketFactory.class.getName()
             ));
         }
@@ -63,72 +54,25 @@ public class LdapAuthConfig {
 
         boolean useGroupSearch = StringUtils.hasText(securityProperties.getLdap().getGroupSearchBase());
 
-        LdapAuthenticationProvider provider;
-        if (useGroupSearch) {
-            DefaultLdapAuthoritiesPopulator groupPopulator = new DefaultLdapAuthoritiesPopulator(
-                    contextSource, securityProperties.getLdap().getGroupSearchBase()
-            );
-            if (StringUtils.hasText(securityProperties.getLdap().getGroupSearchFilter())) {
-                groupPopulator.setGroupSearchFilter(securityProperties.getLdap().getGroupSearchFilter());
-            }
-            groupPopulator.setGroupRoleAttribute("cn");
-            groupPopulator.setRolePrefix("ROLE_");
-            provider = new LdapAuthenticationProvider(authenticator, groupPopulator);
-        } else {
-            String roleAttr = securityProperties.getLdap().getUserRoleAttribute();
-            provider = new LdapAuthenticationProvider(authenticator,
-                    (userData, username) -> {
-                        String[] values = userData.getStringAttributes(roleAttr);
-                        if (values == null) return Collections.emptyList();
-                        return Arrays.stream(values)
-                                .map(v -> new SimpleGrantedAuthority("ROLE_" + v.toUpperCase()))
-                                .collect(Collectors.toList());
-                    });
-        }
+        LdapAuthenticationProvider provider = new LdapAuthenticationProvider(authenticator,
+                useGroupSearch ? groupPopulator(contextSource) : LdapAuthorities.fromUserAttribute(
+                        securityProperties.getLdap().getUserRoleAttribute()));
 
-        provider.setAuthoritiesMapper(buildAuthoritiesMapper(useGroupSearch));
+        provider.setAuthoritiesMapper(LdapAuthorities.mapper(
+                securityProperties.getLdap().getRoleMappings(),
+                securityProperties.getLdap().getDefaultRole(),
+                useGroupSearch));
         return provider;
     }
 
-    private GrantedAuthoritiesMapper buildAuthoritiesMapper(boolean useGroupSearch) {
-        Map<String, String> roleMappings = securityProperties.getLdap().getRoleMappings();
-        Map<String, String> valueToRole = new HashMap<>();
-        for (Map.Entry<String, String> entry : roleMappings.entrySet()) {
-            // group search: match against the CN extracted from the group DN (e.g. "KAFKA-ADMINS")
-            // attribute mode: match against the raw attribute value (e.g. "KAFKA_ADMIN")
-            String key = useGroupSearch
-                    ? extractCn(entry.getValue()).toUpperCase()
-                    : entry.getValue().toUpperCase();
-            valueToRole.put(key, entry.getKey());
+    private DefaultLdapAuthoritiesPopulator groupPopulator(LdapContextSource contextSource) {
+        DefaultLdapAuthoritiesPopulator groupPopulator = new DefaultLdapAuthoritiesPopulator(
+                contextSource, securityProperties.getLdap().getGroupSearchBase());
+        if (StringUtils.hasText(securityProperties.getLdap().getGroupSearchFilter())) {
+            groupPopulator.setGroupSearchFilter(securityProperties.getLdap().getGroupSearchFilter());
         }
-
-        String defaultRole = securityProperties.getLdap().getDefaultRole();
-
-        return authorities -> {
-            Set<GrantedAuthority> mapped = new HashSet<>();
-            if (StringUtils.hasText(defaultRole)) {
-                mapped.add(new SimpleGrantedAuthority("ROLE_" + defaultRole.toUpperCase()));
-            }
-            for (GrantedAuthority authority : authorities) {
-                String auth = authority.getAuthority();
-                String groupName = auth.startsWith("ROLE_") ? auth.substring(5) : auth;
-                String roleName = valueToRole.get(groupName);
-                mapped.add(roleName != null
-                        ? new SimpleGrantedAuthority("ROLE_" + roleName)
-                        : authority);
-            }
-            return mapped;
-        };
-    }
-
-    private String extractCn(String dn) {
-        if (dn == null) return "";
-        String[] parts = dn.split(",");
-        for (String part : parts) {
-            if (part.trim().startsWith("cn=")) {
-                return part.trim().substring(3);
-            }
-        }
-        return "";
+        groupPopulator.setGroupRoleAttribute("cn");
+        groupPopulator.setRolePrefix(LdapAuthorities.ROLE_PREFIX);
+        return groupPopulator;
     }
 }

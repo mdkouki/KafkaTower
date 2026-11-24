@@ -19,15 +19,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.regex.Pattern;
 
-/**
- * Queries any Prometheus-compatible server (VictoriaMetrics, Prometheus, Thanos, Mimir...)
- * directly over its HTTP API ({@code /api/v1/*}) and exposes five tools — {@code metrics},
- * {@code query}, {@code query_range}, {@code labels}, {@code label_values} — so the skills are
- * written once, whatever store sits behind the URL.
- * <p>
- * Deliberately a plain object rather than a Spring bean: {@link PromQlMetricsBackend} builds
- * the tools from it with {@code Tool.fromInstance}, and oversized results are capped here with
- * {@link ToolResponseTruncator}.
+/*
+ * Deliberately a plain object, not a Spring bean: PromQlMetricsBackend builds the tools from it
+ * with Tool.fromInstance, and oversized results are capped here with ToolResponseTruncator.
  */
 public class PromQlQueryTools {
 
@@ -47,20 +41,23 @@ public class PromQlQueryTools {
     public PromQlQueryTools(String url, String token, String username, String password, String tenant) {
         this.baseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.tenant = tenant == null ? "" : tenant;
-        if (token != null && !token.isBlank()) {
-            this.authHeader = "Bearer " + token;
-        } else if (username != null && !username.isBlank()) {
-            this.authHeader = "Basic " + Base64.getEncoder().encodeToString(
-                    (username + ":" + (password == null ? "" : password)).getBytes(StandardCharsets.UTF_8));
-        } else {
-            this.authHeader = null;
-        }
+        this.authHeader = authorizationHeader(token, username, password);
         this.httpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
         log.info("Metrics backend: url={}, auth={}", baseUrl,
                 authHeader == null ? "none" : authHeader.startsWith("Bearer") ? "bearer" : "basic");
     }
 
-    /** Cheap reachability probe: lists label names, which every Prometheus-compatible server serves. */
+    private static String authorizationHeader(String token, String username, String password) {
+        if (token != null && !token.isBlank()) {
+            return "Bearer " + token;
+        }
+        if (username != null && !username.isBlank()) {
+            String credentials = username + ":" + (password == null ? "" : password);
+            return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+        }
+        return null;
+    }
+
     public boolean ping() {
         String error = probe();
         if (error != null) {
@@ -69,7 +66,7 @@ public class PromQlQueryTools {
         return error == null;
     }
 
-    /** Same probe as {@link #ping()}, returning the reason it failed, or null when the backend answers. */
+    /** Lists label names, which every Prometheus-compatible server serves; returns the failure reason or null. */
     public String probe() {
         try {
             JsonNode body = MAPPER.readTree(get("/api/v1/labels", ""));

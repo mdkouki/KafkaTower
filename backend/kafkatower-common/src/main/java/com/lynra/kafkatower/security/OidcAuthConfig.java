@@ -19,6 +19,9 @@ import java.util.List;
 @ConditionalOnProperty(name = "app.security.mode", havingValue = "oidc")
 public class OidcAuthConfig {
 
+    private static final SimpleGrantedAuthority ADMIN_AUTHORITY = new SimpleGrantedAuthority("ROLE_ADMIN");
+    private static final SimpleGrantedAuthority USER_AUTHORITY = new SimpleGrantedAuthority("ROLE_USER");
+
     private final SecurityProperties securityProperties;
 
     public OidcAuthConfig(SecurityProperties securityProperties) {
@@ -27,20 +30,20 @@ public class OidcAuthConfig {
 
     @Bean
     public InMemoryClientRegistrationRepository clientRegistrationRepository() {
+        SecurityProperties.OidcConfig oidc = securityProperties.getOidc();
         ClientRegistration clientRegistration = ClientRegistration
                 .withRegistrationId("oidc")
-                .clientId(securityProperties.getOidc().getClientId())
-                .clientSecret(securityProperties.getOidc().getClientSecret())
+                .clientId(oidc.getClientId())
+                .clientSecret(oidc.getClientSecret())
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
-                .scope(OidcScopes.OPENID, OidcScopes.PROFILE, OidcScopes.EMAIL,
-                        securityProperties.getOidc().getAdminClaim())
-                .authorizationUri(securityProperties.getOidc().getIssuerUri() + "/oauth/authorize")
-                .tokenUri(securityProperties.getOidc().getIssuerUri() + "/oauth/token")
-                .userInfoUri(securityProperties.getOidc().getIssuerUri() + "/oauth/userinfo")
-                .jwkSetUri(securityProperties.getOidc().getIssuerUri() + "/.well-known/jwks.json")
-                .issuerUri(securityProperties.getOidc().getIssuerUri())
+                .scope(OidcScopes.OPENID, OidcScopes.PROFILE, OidcScopes.EMAIL, oidc.getAdminClaim())
+                .authorizationUri(oidc.getIssuerUri() + "/oauth/authorize")
+                .tokenUri(oidc.getIssuerUri() + "/oauth/token")
+                .userInfoUri(oidc.getIssuerUri() + "/oauth/userinfo")
+                .jwkSetUri(oidc.getIssuerUri() + "/.well-known/jwks.json")
+                .issuerUri(oidc.getIssuerUri())
                 .userNameAttributeName(IdTokenClaimNames.SUB)
                 .build();
 
@@ -50,35 +53,28 @@ public class OidcAuthConfig {
     public Collection<SimpleGrantedAuthority> extractRoles(Object claimValue) {
         List<SimpleGrantedAuthority> authorities = new ArrayList<>();
 
-        if (claimValue == null) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
-            return authorities;
-        }
-
-        if (claimValue instanceof String) {
-            String value = (String) claimValue;
-            if (value.equals(securityProperties.getOidc().getAdminGroupValue())) {
-                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-            } else if (value.equals(securityProperties.getOidc().getUserGroupValue())) {
-                authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
-            }
-        } else if (claimValue instanceof Collection) {
-            Collection<?> values = (Collection<?>) claimValue;
-            for (Object value : values) {
-                String stringValue = String.valueOf(value);
-                if (stringValue.equals(securityProperties.getOidc().getAdminGroupValue())) {
-                    authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        if (claimValue instanceof String group) {
+            addRoleForGroup(authorities, group);
+        } else if (claimValue instanceof Collection<?> groups) {
+            for (Object group : groups) {
+                addRoleForGroup(authorities, String.valueOf(group));
+                if (authorities.contains(ADMIN_AUTHORITY)) {
                     break;
-                } else if (stringValue.equals(securityProperties.getOidc().getUserGroupValue())) {
-                    authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
                 }
             }
         }
 
         if (authorities.isEmpty()) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+            authorities.add(USER_AUTHORITY);
         }
-
         return authorities;
+    }
+
+    private void addRoleForGroup(List<SimpleGrantedAuthority> authorities, String group) {
+        if (group.equals(securityProperties.getOidc().getAdminGroupValue())) {
+            authorities.add(ADMIN_AUTHORITY);
+        } else if (group.equals(securityProperties.getOidc().getUserGroupValue())) {
+            authorities.add(USER_AUTHORITY);
+        }
     }
 }

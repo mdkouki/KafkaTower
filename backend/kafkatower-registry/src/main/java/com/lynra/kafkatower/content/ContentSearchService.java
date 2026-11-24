@@ -10,6 +10,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,11 @@ public class ContentSearchService {
     private static final long HARD_MAX_SCAN = 5_000_000;
     private static final Duration TIME_LIMIT = Duration.ofSeconds(60);
     private static final Duration POLL = Duration.ofMillis(300);
+    private static final Duration METADATA_TIMEOUT = Duration.ofSeconds(10);
+    private static final int MAX_EMPTY_POLLS_DIRECT = 5;
+    private static final int MAX_EMPTY_POLLS_RANGE = 3;
+    private static final String CONSUMER_CLIENT_ID = "kafkatower-content";
+    private static final String ISOLATION_READ_COMMITTED = "read_committed";
 
     private final Function<String, Consumer<byte[], byte[]>> consumerFactory;
 
@@ -65,12 +71,11 @@ public class ContentSearchService {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-        props.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
-        props.put(ConsumerConfig.CLIENT_ID_CONFIG, "kafkatower-content");
+        props.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, ISOLATION_READ_COMMITTED);
+        props.put(ConsumerConfig.CLIENT_ID_CONFIG, CONSUMER_CLIENT_ID);
         return new KafkaConsumer<>(props);
     }
 
-    /** Runs the search, pushing events to {@code sink}; returns when finished, limited, timed out or cancelled. */
     public void search(ContentSearchRequest req, PayloadDecoder decoder,
                        java.util.function.Consumer<SearchEvent> sink, BooleanSupplier cancelled) {
         Run run = new Run(req, decoder, sink, cancelled);
@@ -91,7 +96,6 @@ public class ContentSearchService {
         return v == null || v < 1 ? def : Math.min(v, max);
     }
 
-    /** State of a single search. */
     private static final class Run {
         final ContentSearchRequest req;
         final PayloadDecoder decoder;
@@ -117,7 +121,7 @@ public class ContentSearchService {
         }
 
         List<TopicPartition> partitions(Consumer<byte[], byte[]> consumer) {
-            List<PartitionInfo> infos = consumer.partitionsFor(req.topic(), Duration.ofSeconds(10));
+            List<PartitionInfo> infos = consumer.partitionsFor(req.topic(), METADATA_TIMEOUT);
             if (infos == null || infos.isEmpty()) {
                 throw new IllegalArgumentException("Unknown topic: " + req.topic());
             }
@@ -131,7 +135,6 @@ public class ContentSearchService {
             return parts;
         }
 
-        /** Reads up to maxResults records starting at one partition+offset. */
         void direct(Consumer<byte[], byte[]> consumer) {
             if (req.partition() == null) {
                 throw new IllegalArgumentException("An offset needs a partition");
@@ -146,7 +149,7 @@ public class ContentSearchService {
             consumer.assign(List.of(tp));
             consumer.seek(tp, req.offset());
             int empty = 0;
-            while (matched < maxResults && consumer.position(tp) < end && !stopped() && empty < 5) {
+            while (matched < maxResults && consumer.position(tp) < end && !stopped() && empty < MAX_EMPTY_POLLS_DIRECT) {
                 ConsumerRecords<byte[], byte[]> polled = consumer.poll(POLL);
                 empty = polled.isEmpty() ? empty + 1 : 0;
                 List<ContentRecord> batch = new ArrayList<>();
@@ -161,7 +164,6 @@ public class ContentSearchService {
             sink.accept(SearchEvent.done(scanned, matched, null));
         }
 
-        /** Newest-first filtered scan, one chunk of one partition at a time. */
         void scan(Consumer<byte[], byte[]> consumer) {
             List<TopicPartition> parts = partitions(consumer);
             Map<TopicPartition, Long> begin = consumer.beginningOffsets(parts);
@@ -190,10 +192,14 @@ public class ContentSearchService {
                 if (!found.isEmpty()) sink.accept(SearchEvent.records(found));
                 sink.accept(SearchEvent.progress(scanned, matched));
             }
-            String why = matched >= maxResults ? "Result limit (" + maxResults + ") reached"
-                    : scanned >= maxScan ? "Scan limit (" + maxScan + " records) reached"
-                    : !active.isEmpty() && !cancelled.getAsBoolean() ? "Time limit reached" : null;
-            sink.accept(SearchEvent.done(scanned, matched, why));
+            sink.accept(SearchEvent.done(scanned, matched, stopReason(!active.isEmpty())));
+        }
+
+        String stopReason(boolean partitionsLeft) {
+            if (matched >= maxResults) return "Result limit (" + maxResults + ") reached";
+            if (scanned >= maxScan) return "Scan limit (" + maxScan + " records) reached";
+            if (partitionsLeft && !cancelled.getAsBoolean()) return "Time limit reached";
+            return null;
         }
 
         List<ConsumerRecord<byte[], byte[]>> readRange(Consumer<byte[], byte[]> consumer, TopicPartition tp, long lo, long hi) {
@@ -201,7 +207,7 @@ public class ContentSearchService {
             consumer.seek(tp, lo);
             List<ConsumerRecord<byte[], byte[]>> out = new ArrayList<>();
             int empty = 0;
-            while (consumer.position(tp) < hi && !stopped() && empty < 3) {
+            while (consumer.position(tp) < hi && !stopped() && empty < MAX_EMPTY_POLLS_RANGE) {
                 ConsumerRecords<byte[], byte[]> polled = consumer.poll(POLL);
                 empty = polled.isEmpty() ? empty + 1 : 0;
                 for (ConsumerRecord<byte[], byte[]> r : polled.records(tp)) {
@@ -211,7 +217,6 @@ public class ContentSearchService {
             return out;
         }
 
-        /** Applies key / header / value filters (cheapest first); returns the record to show, or null. */
         ContentRecord matchOrNull(ConsumerRecord<byte[], byte[]> r) {
             if (req.key() != null && req.key().active() && !req.key().matches(utf8(r.key()))) return null;
             if (req.header() != null && req.header().active() && !headerMatches(r, req.header())) return null;
@@ -224,10 +229,9 @@ public class ContentSearchService {
         }
 
         boolean headerMatches(ConsumerRecord<byte[], byte[]> r, HeaderFilter f) {
-            for (org.apache.kafka.common.header.Header h : r.headers()) {
-                if (h.key().equals(f.key())
-                        && (f.text() == null || f.text().isEmpty()
-                        || new ContentSearchRequest.TextFilter(f.op(), f.text()).matches(utf8(h.value())))) {
+            ContentSearchRequest.TextFilter valueFilter = new ContentSearchRequest.TextFilter(f.op(), f.text());
+            for (Header h : r.headers()) {
+                if (h.key().equals(f.key()) && (!valueFilter.active() || valueFilter.matches(utf8(h.value())))) {
                     return true;
                 }
             }

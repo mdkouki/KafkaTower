@@ -85,17 +85,32 @@ class KafkaAdminClientToolsTest {
     }
 
     @Test
-    void listTopicsFiltersByPrefixAndSortsResults() throws Exception {
+    void listTopicsFiltersByRegexAndSortsResults() throws Exception {
         ListTopicsResult result = mock(ListTopicsResult.class);
         when(result.names()).thenReturn(completed(Set.of("orders.created", "orders.cancelled", "payments.settled")));
         when(adminClient.listTopics()).thenReturn(result);
 
-        String output = tools.listTopics("test-cluster", "orders.");
+        String output = tools.listTopics("test-cluster", "^orders\\.");
 
         assertThat(output).contains("(2):");
         assertThat(output).contains("orders.cancelled");
         assertThat(output).contains("orders.created");
         assertThat(output).doesNotContain("payments.settled");
+        assertThat(output.indexOf("orders.cancelled")).isLessThan(output.indexOf("orders.created"));
+    }
+
+    @Test
+    void listTopicsRegexCoversSuffixAndAlternationNotJustPrefixes() throws Exception {
+        ListTopicsResult result = mock(ListTopicsResult.class);
+        when(result.names()).thenReturn(completed(Set.of("orders.created", "orders.dlq", "payments.dlq", "payments.settled")));
+        when(adminClient.listTopics()).thenReturn(result);
+
+        String suffix = tools.listTopics("test-cluster", "\\.dlq$");
+        assertThat(suffix).contains("(2):").contains("orders.dlq").contains("payments.dlq").doesNotContain("settled");
+
+        String alternation = tools.listTopics("test-cluster", "^(orders|payments)\\.(created|settled)$");
+        assertThat(alternation).contains("(2):").contains("orders.created").contains("payments.settled")
+                .doesNotContain("dlq");
     }
 
     @Test
@@ -104,16 +119,24 @@ class KafkaAdminClientToolsTest {
         when(result.names()).thenReturn(completed(Set.of("payments.settled")));
         when(adminClient.listTopics()).thenReturn(result);
 
-        String output = tools.listTopics("test-cluster", "orders.");
+        String output = tools.listTopics("test-cluster", "^orders\\.");
 
-        assertThat(output).contains("No topics found matching prefix 'orders.'");
+        assertThat(output).contains("No topics found matching regex '^orders\\.'");
     }
 
     @Test
-    void listTopicsRejectsBlankPrefixWithoutQueryingTheCluster() {
+    void listTopicsRejectsBlankRegexWithoutQueryingTheCluster() {
         String output = tools.listTopics("test-cluster", "");
 
-        assertThat(output).contains("non-empty prefix is required");
+        assertThat(output).contains("non-empty regex is required");
+        verifyNoInteractions(adminClient);
+    }
+
+    @Test
+    void listTopicsReportsInvalidRegexWithoutQueryingTheCluster() {
+        String output = tools.listTopics("test-cluster", "orders.(");
+
+        assertThat(output).startsWith("Invalid regex 'orders.('");
         verifyNoInteractions(adminClient);
     }
 
@@ -145,9 +168,16 @@ class KafkaAdminClientToolsTest {
     }
 
     @Test
-    void listConsumerGroupsRejectsBlankPrefixWithoutQueryingTheCluster() {
+    void listConsumerGroupsRejectsBlankRegexWithoutQueryingTheCluster() {
         String output = tools.listConsumerGroups("nonexistent-cluster", "");
 
-        assertThat(output).contains("non-empty prefix is required").doesNotContain("Unknown cluster");
+        assertThat(output).contains("non-empty regex is required").doesNotContain("Unknown cluster");
+    }
+
+    @Test
+    void listConsumerGroupsReportsInvalidRegexWithoutQueryingTheCluster() {
+        String output = tools.listConsumerGroups("nonexistent-cluster", "[");
+
+        assertThat(output).startsWith("Invalid regex '['").doesNotContain("Unknown cluster");
     }
 }

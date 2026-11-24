@@ -11,15 +11,9 @@ import java.util.List;
 
 /**
  * Per-request wrapper around the {@link SubAgentTools} singleton that prepends prior specialist
- * findings onto each specialist call's question before delegating, so repeat or related calls
- * build on what earlier ones found instead of starting from a blank slate.
- * <p>
- * Constructed fresh per request and passed to {@code ai.withToolObject(...)} instead of the
- * singleton, so Embabel scans this object's {@code @LlmTool} methods instead; the specialist
- * tools are added separately from {@link #specialistTools()}. Deliberately a
- * plain, non-Spring object holding the evidence collector as a direct field rather than a
- * {@code ThreadLocal} or a second constructor on {@link SubAgentTools} — see
- * EMBABEL_GOAP_ALIGNMENT_PLAN.md for why both of those were tried first and rejected.
+ * findings onto each specialist call's question. Deliberately a plain, non-Spring object holding the
+ * evidence collector as a direct field rather than a {@code ThreadLocal} or a second constructor on
+ * {@link SubAgentTools} — see EMBABEL_GOAP_ALIGNMENT_PLAN.md for why both were tried and rejected.
  */
 public class EnrichedSubAgentTools {
 
@@ -52,12 +46,6 @@ public class EnrichedSubAgentTools {
         return delegate.listClusters(query);
     }
 
-    /**
-     * One tool per specialist Spring deployed, named and described by the specialist itself
-     * ({@link Specialist#toolName()} and its {@code @Agent} description). Pass these to
-     * {@code withTools(...)} alongside this object: a specialist bean is all it takes to become
-     * callable, and one that isn't deployed (e.g. no OpenSearch) is simply absent.
-     */
     public List<Tool> specialistTools() {
         return delegate.specialists().stream()
                 .map(this::toolFor)
@@ -82,11 +70,6 @@ public class EnrichedSubAgentTools {
         }
     }
 
-    /**
-     * Prepends every specialist finding recorded so far this request onto {@code question},
-     * including prior calls to the same specialist. Returns it unchanged if nothing's been
-     * found yet. Package-private for direct unit testing.
-     */
     String withPriorFindings(String question) {
         String findings = evidence.specialistFindingsSoFar();
         if (findings == null) {

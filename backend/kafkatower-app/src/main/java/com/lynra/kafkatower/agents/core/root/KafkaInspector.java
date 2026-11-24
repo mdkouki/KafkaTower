@@ -78,9 +78,6 @@ public class KafkaInspector {
         String gapCategory = null;
         String evidenceSnapshot = null;
         ToolCallEvidenceCollector evidence = new ToolCallEvidenceCollector(subAgentTools.specialistToolNames());
-        // A per-request wrapper bound directly to `evidence` (not the raw singleton bean) so
-        // specialist calls get seeded with prior specialist findings from this same request —
-        // see EnrichedSubAgentTools's Javadoc for why this can't be a ThreadLocal instead.
         EnrichedSubAgentTools requestScopedTools = new EnrichedSubAgentTools(subAgentTools, evidence);
 
         for (int round = 1; round <= maxOrchestrationRounds; round++) {
@@ -88,15 +85,10 @@ public class KafkaInspector {
                     : followUpPrompt(question, draft, gap, evidenceSnapshot);
             AgentStatusEventListener.emit(round == 1 ? "drafting_answer" : "refining_answer");
 
-            // Non-streaming on purpose — nothing ever reached the browser token-by-token here
-            // anyway: every round already ran inside TokenStreamSink.suppressed (the final
-            // accepted draft is sent as a single chunk by ChatService's non-streamed fallback
-            // once this method returns), so streaming bought no live-delivery benefit. Worse,
-            // generateStream() exposes a flat Flux<String> with no turn-boundary markers, so
-            // TokenStreamSink.collect() concatenated every chunk across the whole multi-turn
-            // tool-calling loop into one string — including any stray narration a model emits
-            // alongside a tool-call decision (e.g. "askInvestigation" prefixed onto the next
-            // round's real answer). createObject() only returns the final turn's content.
+            // Non-streaming on purpose: nothing reaches the browser token-by-token here anyway, and
+            // generateStream() has no turn-boundary markers, so stray narration alongside tool-call
+            // decisions (e.g. "askInvestigation") got concatenated into the answer.
+            // createObject() returns only the final turn's content.
             draft = LlmCallTimer.timed(log, "draft round " + round, slowCallThresholdMs, () ->
                     ai.withAutoLlm()
                             .withSystemPrompt(orchestrationPrompt)
@@ -106,16 +98,11 @@ public class KafkaInspector {
                             .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
                             .createObject(prompt, String.class));
 
-            // Snapshot once per round and reuse below — both the completeness check and (on a
-            // reject) next round's followUpPrompt need the same evidence, and nothing mutates
-            // `evidence` again until the next draft call runs.
             evidenceSnapshot = evidence.transcript();
 
-            // Review every round, including the last — an unreviewed final draft can silently
-            // drop facts an earlier, reviewed draft had. We still stop retrying after
-            // maxOrchestrationRounds; we just never return a draft nobody checked.
-            // draft/evidenceSnapshot are reassigned each iteration, so they can't be captured
-            // directly by the lambda below (not effectively final) — snapshot into final locals.
+            // Every round is reviewed, including the last: an unreviewed final draft can silently drop
+            // facts an earlier, reviewed draft had.
+            // Final copies because draft/evidenceSnapshot are reassigned and can't be captured by the lambda.
             final String draftForReview = draft;
             final String evidenceForReview = evidenceSnapshot;
             AgentStatusEventListener.emit("reviewing_answer");
@@ -135,9 +122,7 @@ public class KafkaInspector {
                         maxOrchestrationRounds, completeness.reason());
                 break;
             }
-            // If the fix attempt didn't move the needle — the reviewer is flagging essentially
-            // the same gap again — another round under the same instruction is very unlikely to
-            // either. Stop now rather than spending a further round regenerating the same miss.
+            // Same gap flagged again after a fix attempt: another round is unlikely to close it.
             if (isSameGap(gapCategory, gap, completeness.category(), completeness.reason())) {
                 log.warn("KafkaInspector stopping early at round {} — reviewer repeated the same gap after a fix attempt: {}",
                         round, completeness.reason());
@@ -147,22 +132,12 @@ public class KafkaInspector {
             gapCategory = completeness.category();
         }
 
-        // NOTE: whether the loop stopped because the draft was accepted or because it gave up
-        // (the two log.warn cases above), the answer returned here is identical either way — the
-        // caller has no way to tell "verified" from "gave up after N rounds still flagged" apart
-        // from re-reading logs. Surfacing that distinction to the end user (e.g. a caveat on a
-        // given-up answer) is a deliberate follow-up, not done here.
+        // The caller cannot tell an accepted draft from one returned after giving up (see the log.warn cases above).
         return new AgentAnswer(draft);
     }
 
-    /**
-     * "Is the reviewer repeating last round's complaint" — gated on {@code category} first
-     * (see ROOT_COMPLETENESS_CHECK.md) rather than judged by reason-text similarity alone: two
-     * distinct fabrication complaints about different facts would otherwise share enough common
-     * vocabulary ("draft", "evidence", "specialist") to look like a repeat, and category alone
-     * would conflate two different missing-information gaps that happen to land in the same
-     * round. Requiring both keeps false positives from either signal from tripping the other.
-     */
+    // Requires the same category AND similar reason text: reason text alone matches distinct complaints sharing
+    // vocabulary ("draft", "evidence", "specialist"), and category alone conflates different gaps of one kind.
     static boolean isSameGap(String previousCategory, String previousReason, String currentCategory, String currentReason) {
         if (previousReason == null || currentReason == null) return false;
         boolean sameCategory = previousCategory != null && !previousCategory.isBlank()

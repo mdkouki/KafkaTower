@@ -41,8 +41,7 @@ public class OpenSearchSettingsController {
         return store.read(OpenSearchSettings.SECTION, OpenSearchSettings.class).isPresent();
     }
 
-    /** What is in effect: the saved settings, else whatever yml/env configured. */
-    private OpenSearchSettings current() {
+    private OpenSearchSettings effectiveSettings() {
         return store.read(OpenSearchSettings.SECTION, OpenSearchSettings.class).orElseGet(() -> {
             OsProperties yml = Binder.get(env).bind("agent.mcp.os", OsProperties.class).orElseGet(OsProperties::new);
             List<OpenSearchSettings.Cluster> clusters = new ArrayList<>();
@@ -57,7 +56,7 @@ public class OpenSearchSettingsController {
 
     @GetMapping
     public OpenSearchResponse get() {
-        OpenSearchSettings os = current();
+        OpenSearchSettings os = effectiveSettings();
         return new OpenSearchResponse(os.enabled(), nz(os.defaultCluster()), os.clusters().stream()
                 .map(c -> new ClusterView(c.name(), nz(c.url()), nz(c.username()),
                         c.password() != null && !c.password().isBlank(), nz(c.index())))
@@ -66,13 +65,33 @@ public class OpenSearchSettingsController {
 
     @PutMapping
     public ResponseEntity<SettingsSaveResponse> save(@RequestBody OpenSearchRequest request) {
-        OpenSearchSettings before = current();
+        OpenSearchSettings before = effectiveSettings();
+        List<OpenSearchSettings.Cluster> clusters = mergeClusters(request.clusters(), before);
+        String defaultCluster = nz(request.defaultCluster()).trim();
+        if (!defaultCluster.isEmpty() && clusters.stream().noneMatch(c -> c.name().equals(defaultCluster))) {
+            throw invalid("The default cluster '" + defaultCluster + "' is not in the list.");
+        }
+        OpenSearchSettings after = new OpenSearchSettings(Boolean.TRUE.equals(request.enabled()), defaultCluster, clusters);
+
+        if (after.enabled()) {
+            requireReachable(clusters);
+        }
+        if (after.equals(before) && isSaved()) {
+            return ResponseEntity.ok(new SettingsSaveResponse("saved", "Verified. No change.", false));
+        }
+        store.write(OpenSearchSettings.SECTION, after);
+        restarter.restart();
+        return ResponseEntity.ok(new SettingsSaveResponse("saved",
+                "Verified and saved. The application restarts and is back in a few seconds.", true));
+    }
+
+    private List<OpenSearchSettings.Cluster> mergeClusters(List<ClusterInput> inputs, OpenSearchSettings before) {
         Map<String, OpenSearchSettings.Cluster> stored = new HashMap<>();
         before.clusters().forEach(c -> stored.put(c.name(), c));
 
         List<OpenSearchSettings.Cluster> clusters = new ArrayList<>();
         Set<String> names = new HashSet<>();
-        for (ClusterInput in : request.clusters() == null ? List.<ClusterInput>of() : request.clusters()) {
+        for (ClusterInput in : inputs == null ? List.<ClusterInput>of() : inputs) {
             String name = nz(in.name()).trim();
             String url = nz(in.url()).trim();
             if (name.isEmpty() || url.isEmpty()) {
@@ -82,33 +101,26 @@ public class OpenSearchSettingsController {
                 throw invalid("Cluster name '" + name + "' is used twice.");
             }
             String lookup = nz(in.previousName()).trim().isEmpty() ? name : in.previousName().trim();
-            OpenSearchSettings.Cluster old = stored.get(lookup);
-            String password = in.password() != null && !in.password().isBlank() ? in.password()
-                    : Boolean.TRUE.equals(in.clearPassword()) || old == null ? "" : nz(old.password());
-            clusters.add(new OpenSearchSettings.Cluster(name, url, nz(in.username()).trim(), password,
-                    nz(in.index()).trim()));
+            clusters.add(new OpenSearchSettings.Cluster(name, url, nz(in.username()).trim(),
+                    resolvePassword(in, stored.get(lookup)), nz(in.index()).trim()));
         }
-        String defaultCluster = nz(request.defaultCluster()).trim();
-        if (!defaultCluster.isEmpty() && !names.contains(defaultCluster)) {
-            throw invalid("The default cluster '" + defaultCluster + "' is not in the list.");
-        }
-        OpenSearchSettings after = new OpenSearchSettings(Boolean.TRUE.equals(request.enabled()), defaultCluster, clusters);
+        return clusters;
+    }
 
-        if (after.enabled()) {
-            for (OpenSearchSettings.Cluster c : clusters) {
-                String error = probe(c);
-                if (error != null) {
-                    throw invalid("Cluster '" + c.name() + "' (" + c.url() + "): " + error);
-                }
+    private static String resolvePassword(ClusterInput input, OpenSearchSettings.Cluster stored) {
+        if (input.password() != null && !input.password().isBlank()) {
+            return input.password();
+        }
+        return Boolean.TRUE.equals(input.clearPassword()) || stored == null ? "" : nz(stored.password());
+    }
+
+    private void requireReachable(List<OpenSearchSettings.Cluster> clusters) {
+        for (OpenSearchSettings.Cluster c : clusters) {
+            String error = probe(c);
+            if (error != null) {
+                throw invalid("Cluster '" + c.name() + "' (" + c.url() + "): " + error);
             }
         }
-        if (after.equals(before) && isSaved()) {
-            return ResponseEntity.ok(new SettingsSaveResponse("saved", "Verified. No change.", false));
-        }
-        store.write(OpenSearchSettings.SECTION, after);
-        restarter.restart();
-        return ResponseEntity.ok(new SettingsSaveResponse("saved",
-                "Verified and saved. The application restarts and is back in a few seconds.", true));
     }
 
     /** Null when the cluster answers and its index (if any) is searchable; else the reason. */

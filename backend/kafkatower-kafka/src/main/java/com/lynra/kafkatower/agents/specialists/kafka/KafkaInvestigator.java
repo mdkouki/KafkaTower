@@ -71,7 +71,6 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         this.sharedGuidance = sharedGuidance;
     }
 
-    /** Base skill + cross-specialist guidance (once injected) + the admin commands reference. */
     private String systemPrompt() {
         String guidance = sharedGuidance;
         return basePrompt
@@ -136,25 +135,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 broad admin discovery from step one.
                 """.formatted(adminSnapshot.summary());
 
-        PromptRunner runner;
-        if (metricsBackend.isAvailable()) {
-            UnfoldingTool metricsTools = metricsBackend.queryTools(
-                    "metrics-investigation",
-                    "correlating live Kafka state with metric trends",
-                    "Use `metrics` for discovery, then `query` (instant) or `query_range` (trend) "
-                            + "to correlate against the admin snapshot above.");
-            runner = ai.withAutoLlm()
-                    .withSystemPrompt(base)
-                    .withToolObject(kafkaAdminClientTools)
-                    .withToolObject(metricsSkillTools)
-                    .withTool(metricsTools);
-        } else {
-            // Metrics store down — still correlate using AdminClient-only re-entry, note the limitation
-            runner = ai.withAutoLlm()
-                    .withSystemPrompt(withMetricsUnavailableNote(base, metricsBackend.unavailableMessage()))
-                    .withToolObject(kafkaAdminClientTools)
-                    .withToolObject(metricsSkillTools);
-        }
+        PromptRunner runner = correlationRunner(ai, base);
         // Non-streaming on purpose — see KafkaMetricsInspector.answer for why: the streaming
         // call path never re-evaluates ToolInjectionStrategy between rounds, so UnfoldingTool's
         // facade-then-real-tools swap can't work over it. This specialist's own token stream is
@@ -167,13 +148,30 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         return new MetricsCorrelation(response);
     }
 
-    /** Extracted from {@link #correlateMetrics}'s metrics-down branch for direct unit testing. */
+    private PromptRunner correlationRunner(Ai ai, String base) {
+        if (!metricsBackend.isAvailable()) {
+            return ai.withAutoLlm()
+                    .withSystemPrompt(withMetricsUnavailableNote(base, metricsBackend.unavailableMessage()))
+                    .withToolObject(kafkaAdminClientTools)
+                    .withToolObject(metricsSkillTools);
+        }
+        UnfoldingTool metricsTools = metricsBackend.queryTools(
+                "metrics-investigation",
+                "correlating live Kafka state with metric trends",
+                "Use `metrics` for discovery, then `query` (instant) or `query_range` (trend) "
+                        + "to correlate against the admin snapshot above.");
+        return ai.withAutoLlm()
+                .withSystemPrompt(base)
+                .withToolObject(kafkaAdminClientTools)
+                .withToolObject(metricsSkillTools)
+                .withTool(metricsTools);
+    }
+
     static String withMetricsUnavailableNote(String base, String unavailableMessage) {
         return base + "\n\nNOTE: " + unavailableMessage +
                 " Do not attempt to query metrics; note this limitation in your summary.";
     }
 
-    /** No tools — pure synthesis of the two prior findings into KAFKA_INVESTIGATOR.md's report format. */
     @AchievesGoal(description = "Full issue analysis and root cause found")
     @Action(description = """
             Synthesize the admin snapshot and metrics correlation into the final Kafka
@@ -210,7 +208,6 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     public String toolName() {
         return "askInvestigation";
     }
-
 
     @Override
     public Class<InvestigationAnswer> answerType() {
