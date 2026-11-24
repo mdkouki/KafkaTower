@@ -9,34 +9,26 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Collects every specialist tool call and its result made during a single
- * {@code KafkaInspector.answer()} invocation, so the completeness reviewer can check the draft
- * against what specialists actually returned, and {@code EnrichedSubAgentTools} can seed a new
- * specialist call with what earlier ones already found. Create one instance per request — unlike
- * {@link ToolCallAuditLogger}, this is stateful and must not be shared across requests.
+/*
+ * Stateful: create one instance per request; unlike ToolCallAuditLogger it must not be shared.
  */
 public final class ToolCallEvidenceCollector implements ToolCallInspector {
 
     private static final int MAX_TRANSCRIPT_CHARS = 24_000;
     private static final String ENTRY_SEPARATOR = "\n\n---\n\n";
 
-    /** Tool names whose calls/results are specialist findings worth forwarding to the next
-     *  specialist call — as opposed to listClusters, etc. Supplied from the deployed specialists
-     *  ({@code Specialist.toolName()}), so a new specialist is covered without touching this class. */
     private final Set<String> specialistToolNames;
-
-    public ToolCallEvidenceCollector(Set<String> specialistToolNames) {
-        this.specialistToolNames = Set.copyOf(specialistToolNames);
-    }
 
     // Synchronized because Embabel/Spring AI can dispatch multiple tool calls from a single LLM
     // turn concurrently.
     private final List<String> calls = Collections.synchronizedList(new ArrayList<>());
 
+    public ToolCallEvidenceCollector(Set<String> specialistToolNames) {
+        this.specialistToolNames = Set.copyOf(specialistToolNames);
+    }
+
     @Override
     public void beforeToolCall(BeforeToolCallContext context) {
-        // no-op: only the result is needed as evidence
     }
 
     @Override
@@ -52,8 +44,6 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
         }
     }
 
-    /** Every tool call this request, capped and newest-first-preserved so it fits a completeness
-     *  review prompt without ballooning across orchestration rounds. */
     public String transcript() {
         List<String> snapshot = snapshot();
         if (snapshot.isEmpty()) {
@@ -62,13 +52,6 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
         return capped(snapshot, "[%d older tool call(s) elided]" + ENTRY_SEPARATOR);
     }
 
-    /**
-     * Every prior specialist call (any of the configured specialist tool names)
-     * and result recorded so far this request, formatted for prepending onto a new specialist
-     * call's question — or {@code null} if no specialist has been called yet. Unlike
-     * {@link #transcript()} this excludes non-specialist tool calls (listClusters, etc.):
-     * those aren't findings another specialist needs to reconcile with.
-     */
     public String specialistFindingsSoFar() {
         List<String> specialistCalls = snapshot().stream()
                 .filter(entry -> specialistToolNames.stream().anyMatch(name -> entry.startsWith("Tool: " + name + "\n")))
@@ -79,8 +62,7 @@ public final class ToolCallEvidenceCollector implements ToolCallInspector {
         return capped(specialistCalls, "[%d older specialist call(s) elided]" + ENTRY_SEPARATOR);
     }
 
-    /** Keeps the most recent entries — closest to whatever is being reviewed/asked next — up to
-     *  {@link #MAX_TRANSCRIPT_CHARS}, dropping older ones from the front once the budget is hit. */
+    // Keeps the most recent entries, dropping older ones from the front once the budget is hit.
     private static String capped(List<String> entries, String elidedNoticeFormat) {
         List<String> kept = new ArrayList<>();
         int total = 0;

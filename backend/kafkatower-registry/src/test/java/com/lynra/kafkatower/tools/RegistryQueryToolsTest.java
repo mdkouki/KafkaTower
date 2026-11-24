@@ -1,5 +1,7 @@
 package com.lynra.kafkatower.tools;
 
+import com.lynra.kafkatower.collections.CollectionPresenter;
+import com.lynra.kafkatower.collections.CollectionStore;
 import com.lynra.kafkatower.kafka.GroupInfo;
 import com.lynra.kafkatower.kafka.GroupService;
 import com.lynra.kafkatower.model.AclGroupGrant;
@@ -15,6 +17,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,7 +30,9 @@ class RegistryQueryToolsTest {
     private final TopicGraphStore topicStore = new TopicGraphStore();
     private final AclGraphStore aclStore = new AclGraphStore();
     private final GroupService groupService = mock(GroupService.class);
-    private final RegistryQueryTools tools = new RegistryQueryTools(topicStore, aclStore, new TopicGroupLagService(groupService));
+    private final CollectionStore collectionStore = new CollectionStore(600, 200_000);
+    private final RegistryQueryTools tools = new RegistryQueryTools(topicStore, aclStore,
+            new TopicGroupLagService(groupService), new CollectionPresenter(collectionStore, 5));
 
     @BeforeEach
     void seed() {
@@ -45,14 +51,24 @@ class RegistryQueryToolsTest {
     }
 
     @Test
-    void findTopicsRequiresAPrefix() {
-        assertThat(tools.findTopics("prod", " ")).contains("prefix is required");
+    void findTopicsRequiresARegex() {
+        assertThat(tools.findTopics("prod", " ")).contains("regex is required");
     }
 
     @Test
     void findTopicsListsMatchesWithCounts() {
-        assertThat(tools.findTopics("prod", "orders.e")).contains("orders.events").contains("producers=1 consumers=2")
+        assertThat(tools.findTopics("prod", "^orders\\.e")).contains("orders.events").contains("producers=1 consumers=2")
                 .doesNotContain("orders.dlq");
+    }
+
+    @Test
+    void findTopicsRegexCoversSuffixes() {
+        assertThat(tools.findTopics("prod", "\\.dlq$")).contains("orders.dlq").doesNotContain("orders.events");
+    }
+
+    @Test
+    void findTopicsReportsInvalidRegex() {
+        assertThat(tools.findTopics("prod", "orders.(")).startsWith("Invalid regex 'orders.('");
     }
 
     @Test
@@ -87,7 +103,7 @@ class RegistryQueryToolsTest {
     @Test
     void describePrincipalKeepsPrefixMarkersAndGroupGrants() {
         assertThat(tools.describePrincipal("prod", "User:logistics-service"))
-                .contains("produces to (1): shipments.*").contains("consumer groups: logistics*");
+                .contains("produces to (1): shipments.*").contains("consumer groups (1): logistics*");
     }
 
     @Test
@@ -110,6 +126,28 @@ class RegistryQueryToolsTest {
 
         assertThat(tools.topicConsumerGroups("prod", "orders.events")).contains("g1  state=Stable  lag=40")
                 .doesNotContain("g2");
+    }
+
+    @Test
+    void findPrincipalsParksLongResultsBehindACollectionKey() {
+        Map<String, UserAclSummary> users = new java.util.TreeMap<>();
+        for (int i = 0; i < 8; i++) {
+            String principal = "User:svc-" + i;
+            users.put(principal, new UserAclSummary(principal, List.of(), List.of(), List.of(), List.of()));
+        }
+        aclStore.put(new ClusterAclGraph("big", users, Instant.now(), null));
+
+        String result = tools.findPrincipals("big", "svc");
+
+        assertThat(result).contains("(8)").contains("User:svc-4").doesNotContain("User:svc-5").contains("3 more not shown");
+        Matcher key = Pattern.compile("Collection key: ([0-9a-f]+)").matcher(result);
+        assertThat(key.find()).isTrue();
+        assertThat(collectionStore.find(key.group(1))).hasValueSatisfying(items -> assertThat(items).hasSize(8));
+    }
+
+    @Test
+    void shortResultsAreCompleteWithoutAKey() {
+        assertThat(tools.findPrincipals("prod", "service")).contains("(2)").doesNotContain("ollection key");
     }
 
     private static GroupInfo group(String id, String topic, long lag) {

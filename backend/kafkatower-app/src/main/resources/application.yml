@@ -23,6 +23,14 @@ embabel:
           per-tool-timeout: 300s
           batch-timeout: 330s
           executor-type: VIRTUAL
+      # One createObject call — for the orchestrator that is its whole tool loop, specialists
+      # included. Embabel's default of 60s times the call out while it keeps running in the
+      # background and starts a duplicate attempt, so every orchestrator run over a minute was
+      # executed again (and again) from scratch. Keep it above the longest request; the chat SSE
+      # emitter gives up at 600s.
+      llm-operations:
+        prompts:
+          default-timeout: 600s
       observability:
         enabled: true
         service-name: kafkatower

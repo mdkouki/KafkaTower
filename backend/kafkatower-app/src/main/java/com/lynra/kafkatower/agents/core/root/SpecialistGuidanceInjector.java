@@ -9,26 +9,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * Pushes the shared, cross-specialist behavioral guidance (tool-output handling, query
- * strategy, reply format, metrics query guardrails — see
- * kafkatower-common/src/main/resources/skills/shared/) into every deployed {@link Specialist}.
- * <p>
- * This lives in kafkatower-app rather than in each specialist module on purpose: the shared
- * guidance controls how specialists are allowed to behave, and that's an orchestration-layer
- * decision, not something each domain module should assemble for itself. A specialist only
- * loads its own domain skill doc; it never reads {@code skills/shared/*.md} directly.
- * <p>
- * Which shared docs go to which specialist, and in what order, is domain knowledge that used to
- * live inside each specialist's own {@code loadSkill()} — preserved here verbatim so behavior is
- * unchanged, just relocated to the one place that's allowed to know about every specialist at
- * once.
- * <p>
- * Wired entirely through constructor injection, not an event listener: Spring must fully build
- * every {@code List<Specialist<?, ?>>} element — including its own {@code @PostConstruct} that
- * sets its base prompt — before it can hand this constructor the list, so there's no ordering
- * race to guard against here.
- */
+// Lives in kafkatower-app rather than in each specialist module on purpose: the shared guidance controls
+// how specialists may behave, which is an orchestration-layer decision. A specialist only loads its own
+// domain skill doc.
+// Wired through the constructor, not an event listener: Spring fully builds every Specialist (including
+// its @PostConstruct that sets the base prompt) before it can hand over the list, so there is no ordering race.
 @ConditionalOnAssistantEnabled
 @Component
 public class SpecialistGuidanceInjector {
@@ -38,18 +23,23 @@ public class SpecialistGuidanceInjector {
                     "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
                     "/skills/shared/METRICS_QUERY_GUARDRAILS.md",
                     "/skills/shared/QUERY_STRATEGY.md",
+                    "/skills/shared/LARGE_RESULTS.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaLogInspector", List.of(
                     "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
                     "/skills/shared/QUERY_STRATEGY.md",
+                    "/skills/shared/LARGE_RESULTS.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaRegistryInspector", List.of(
                     "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
                     "/skills/shared/QUERY_STRATEGY.md",
+                    "/skills/shared/LARGE_RESULTS.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md"),
             "KafkaMetricsInspector", List.of(
+                    "/skills/shared/UNTRUSTED_TOOL_OUTPUT.md",
                     "/skills/shared/METRICS_QUERY_GUARDRAILS.md",
                     "/skills/shared/QUERY_STRATEGY.md",
+                    "/skills/shared/LARGE_RESULTS.md",
                     "/skills/shared/SPECIALIST_REPLY_FORMAT.md")
     );
 

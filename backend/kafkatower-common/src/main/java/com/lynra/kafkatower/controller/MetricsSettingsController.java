@@ -1,6 +1,6 @@
 package com.lynra.kafkatower.controller;
 
-import com.lynra.kafkatower.agents.specialists.config.PromQlQueryTools;
+import com.lynra.kafkatower.agents.specialists.config.PromQlClient;
 import com.lynra.kafkatower.config.AdminSettingsStore;
 import com.lynra.kafkatower.config.ApplicationRestarter;
 import com.lynra.kafkatower.model.MetricsSettings;
@@ -71,7 +71,7 @@ public class MetricsSettingsController {
 
     /** Overridable in tests. */
     String probe(MetricsSettings m) {
-        return new PromQlQueryTools(m.url(), m.token(), m.username(), m.password(), m.tenant()).probe();
+        return new PromQlClient(m.url(), m.token(), m.username(), m.password(), m.tenant()).probe();
     }
 
     /** Blank keeps the stored secret; the clear flag removes it. */

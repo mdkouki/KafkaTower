@@ -37,6 +37,8 @@ public final class PayloadDecoder {
     }
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final byte CONFLUENT_MAGIC_BYTE = 0;
+    private static final int CONFLUENT_HEADER_LENGTH = 5;
     private static final PayloadDecoder PLAIN = new PayloadDecoder(null, false);
 
     private final Mapper mapper;
@@ -47,7 +49,6 @@ public final class PayloadDecoder {
         this.rawIsDecoded = rawIsDecoded;
     }
 
-    /** A decoder that only renders UTF-8 and reports it as not decoded — used when a needed schema is absent. */
     public static PayloadDecoder plain() {
         return PLAIN;
     }
@@ -86,10 +87,10 @@ public final class PayloadDecoder {
         Schema schema = new Schema.Parser().parse(schemaJson);
         GenericDatumReader<Object> reader = new GenericDatumReader<>(schema);
         return new PayloadDecoder(bytes -> {
-            // Confluent wire format: magic byte 0 + 4-byte schema id before the Avro payload.
-            if (bytes.length > 5 && bytes[0] == 0) {
+            // Confluent wire format: magic byte + 4-byte schema id before the Avro payload.
+            if (bytes.length > CONFLUENT_HEADER_LENGTH && bytes[0] == CONFLUENT_MAGIC_BYTE) {
                 try {
-                    return avroJson(reader, schema, bytes, 5);
+                    return avroJson(reader, schema, bytes, CONFLUENT_HEADER_LENGTH);
                 } catch (Exception ignored) {
                     // not framed after all — fall through to a plain Avro decode
                 }

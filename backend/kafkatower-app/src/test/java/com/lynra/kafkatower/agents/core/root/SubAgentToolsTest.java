@@ -35,6 +35,11 @@ class SubAgentToolsTest {
     }
 
     @Test
+    void clusterNamesAreSortedIgnoringCase() {
+        assertThat(tools.clusterNames()).containsExactly("prod", "staging");
+    }
+
+    @Test
     void listClustersReportsEveryLiveCluster() {
         String output = tools.listClusters("");
 

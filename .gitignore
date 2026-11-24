@@ -10,3 +10,5 @@
 /graphify-out/
 .DS_Store
 target/
+graphify-out
+

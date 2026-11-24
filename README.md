@@ -45,6 +45,8 @@ Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declare
 
 All tools are read-only. Live-state results are cached for 15–30 s so a multi-step investigation doesn't hammer the brokers.
 
+Tools never hand a long list to the model. A result of more than 5 items comes back as its count, the first 5 items and a collection key; the full list is held for `agent.collections.ttl-seconds` (default 600). The specialists pass that key to the `bulkOperation` tool to `count`, `slice`, `chunk`, `filter`, `exclude`, `filter_number`, `sort`, `distinct`, `group_by`, `map`, `flat_map` or `aggregate` it. A bulk result that is itself longer than 5 items is stored again under a new key. `agent.collections.inline-limit` (default 5) and `agent.collections.max-items` (default 200000, total items held) tune this.
+
 ### Built to be trusted
 
 - **Independent completeness review:** every draft is checked for gaps and refined with further tool calls, for at most 2 rounds (`agent.orchestration.max-rounds`).

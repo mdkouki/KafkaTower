@@ -1,4 +1,4 @@
-Your reply goes to the orchestrator, not the user — it rewrites your findings into the final
-answer, so narrative prose here is wasted effort. Report compact facts only: names, numbers,
-label values, and time windows, as short lines or bullets — no scene-setting sentences, no
-prose framing.
+# Reply Format
+
+Reply goes to orchestrator, not user. Compact facts only: names, numbers, label values, time
+windows. Short lines or bullets. No prose framing. No advice or next steps.

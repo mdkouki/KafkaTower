@@ -4,6 +4,7 @@ import com.embabel.agent.api.annotation.SpecialReturnException;
 import com.embabel.agent.api.common.Ai;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientProvider;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
+import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.OpenSearchQueryTools;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +12,9 @@ import java.util.Optional;
 import java.util.TreeSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -24,7 +28,7 @@ import static org.mockito.Mockito.when;
 class KafkaLogInspectorTest {
 
     private static KafkaLogInspector inspector(OpenSearchClientRegistry registry) {
-        return new KafkaLogInspector(registry, mock(OpenSearchQueryTools.class), 15000L);
+        return new KafkaLogInspector(registry, mock(OpenSearchQueryTools.class), mock(BulkCollectionTools.class), 15000L);
     }
 
     @Test
@@ -73,6 +77,27 @@ class KafkaLogInspectorTest {
 
         assertThat(resolved.provider()).isSameAs(provider);
         assertThat(resolved.note()).isNull();
+    }
+
+    @Test
+    void resolveLogClusterFallsBackToFirstClusterWithNoteWhenSelectedClusterIsUnknown() {
+        OpenSearchClientRegistry registry = mock(OpenSearchClientRegistry.class);
+        OpenSearchClientProvider fallback = mock(OpenSearchClientProvider.class);
+        Ai ai = mock(Ai.class, RETURNS_DEEP_STUBS);
+        when(registry.isEmpty()).thenReturn(false);
+        when(registry.clusterNames()).thenReturn(new TreeSet<>(java.util.Set.of("alpha", "beta")));
+        when(registry.defaultCluster()).thenReturn(Optional.empty());
+        when(registry.forCluster("ghost")).thenReturn(Optional.empty());
+        when(registry.forCluster("alpha")).thenReturn(Optional.of(fallback));
+        when(fallback.clusterName()).thenReturn("alpha");
+        when(fallback.isAvailable()).thenReturn(true);
+        when(ai.withAutoLlm().withSystemPrompt(anyString()).createObject(anyString(), eq(ClusterSelection.class)))
+                .thenReturn(new ClusterSelection("ghost"));
+
+        ResolvedCluster resolved = inspector(registry).resolveLogCluster(new LogQuestion("errors?"), ai);
+
+        assertThat(resolved.provider()).isSameAs(fallback);
+        assertThat(resolved.note()).contains("ghost").contains("alpha");
     }
 
     private static SpecialReturnException catchSpecialReturn(Runnable action) {

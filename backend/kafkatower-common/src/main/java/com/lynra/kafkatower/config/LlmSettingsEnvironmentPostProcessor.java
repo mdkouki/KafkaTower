@@ -11,6 +11,7 @@ import org.springframework.util.StringUtils;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,26 +20,16 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.logging.Logger;
 
-/**
- * Decides, before the application context starts, whether the AI assistant runs.
- * <p>
- * The LLM settings an admin saves in the UI live in the {@code llm_settings} table. When they are
- * complete (API key, base URL and model) this injects them as the Spring properties Embabel and
- * Spring AI read, and sets {@link #ASSISTANT_ENABLED} so the beans marked
- * {@link ConditionalOnAssistantEnabled} are created. When they are not, it sets the flag to
- * {@code false} and excludes the autoconfigurations that need an LLM (Embabel and Spring AI's
- * OpenAI), so the rest of the console still starts without any key.
- * <p>
- * Runs again on every context restart (see {@link ApplicationRestarter}), which is how saving
- * new settings takes effect without restarting the process. If {@link #ASSISTANT_ENABLED} is
- * already set (environment variable, yml or test property), that wins and the database is not
- * consulted — configuration as code.
+/*
+ * Runs again on every context restart (see ApplicationRestarter), which is how saved settings take
+ * effect. An explicit ASSISTANT_ENABLED (env var, yml, test property) wins and the database is not
+ * consulted. When LLM settings are incomplete, the LLM autoconfigurations are excluded so the rest
+ * of the console still starts without a key.
  */
 public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProcessor {
 
     public static final String ASSISTANT_ENABLED = "kafkatower.assistant.enabled";
 
-    /** Autoconfigurations that cannot start without an LLM key; excluded while unconfigured. */
     static final List<String> LLM_AUTOCONFIGURATIONS = List.of(
             "com.embabel.agent.autoconfigure.platform.AgentPlatformAutoConfiguration",
             "com.embabel.agent.autoconfigure.models.openai.AgentOpenAiAutoConfiguration",
@@ -55,7 +46,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
 
     private static final Logger log = Logger.getLogger(LlmSettingsEnvironmentPostProcessor.class.getName());
 
-    /** The three values the assistant needs; any blank one means "not configured". */
     record LlmSettings(String apiKey, String baseUrl, String model) {
         boolean complete() {
             return StringUtils.hasText(apiKey) && StringUtils.hasText(baseUrl) && StringUtils.hasText(model);
@@ -66,24 +56,7 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
         Map<String, Object> props = new HashMap<>();
         String explicit = environment.getProperty(ASSISTANT_ENABLED);
-        boolean enabled;
-        if (explicit != null) {
-            // Configured as code (env var, yml, test property, or the restarter's safe-mode retry).
-            enabled = Boolean.parseBoolean(explicit);
-        } else {
-            LlmSettings settings = readSettings(environment);
-            enabled = settings.complete();
-            props.put(ASSISTANT_ENABLED, String.valueOf(enabled));
-            if (enabled) {
-                props.put("spring.ai.openai.api-key", settings.apiKey());
-                props.put("spring.ai.openai.base-url", settings.baseUrl());
-                props.put("spring.ai.openai.chat.options.model", settings.model());
-                props.put("embabel.agent.platform.models.openai.api-key", settings.apiKey());
-                props.put("embabel.agent.platform.models.openai.base-url", settings.baseUrl());
-                props.put("embabel.models.default-llm", settings.model());
-                log.info("AI assistant enabled: LLM settings loaded from the database.");
-            }
-        }
+        boolean enabled = explicit != null ? Boolean.parseBoolean(explicit) : applyDatabaseLlmSettings(environment, props);
         if (!enabled) {
             props.put("spring.autoconfigure.exclude", String.join(",", excludes(environment)));
             log.info("AI assistant disabled: no usable LLM settings (an admin can set them in the UI).");
@@ -94,11 +67,28 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         environment.getPropertySources().addFirst(new MapPropertySource("llmSettingsDb", props));
     }
 
-    /** The Kafka clusters configured in the admin console become {@code kafka.clusters.*}. */
+    private static boolean applyDatabaseLlmSettings(ConfigurableEnvironment environment, Map<String, Object> props) {
+        LlmSettings settings = readSettings(environment);
+        boolean enabled = settings.complete();
+        props.put(ASSISTANT_ENABLED, String.valueOf(enabled));
+        if (enabled) {
+            props.put("spring.ai.openai.api-key", settings.apiKey());
+            props.put("spring.ai.openai.base-url", settings.baseUrl());
+            props.put("spring.ai.openai.chat.options.model", settings.model());
+            props.put("embabel.agent.platform.models.openai.api-key", settings.apiKey());
+            props.put("embabel.agent.platform.models.openai.base-url", settings.baseUrl());
+            props.put("embabel.models.default-llm", settings.model());
+            log.info("AI assistant enabled: LLM settings loaded from the database.");
+        }
+        return enabled;
+    }
+
     private static void addKafka(ConfigurableEnvironment environment, Map<String, Object> props) {
         String json = readSection(environment, KafkaSettings.SECTION);
         if (json == null) return;
-        for (KafkaSettings.Cluster c : parseOrNull(json, KafkaSettings.SECTION, KafkaSettings.class) == null ? List.<KafkaSettings.Cluster>of() : parseOrNull(json, KafkaSettings.SECTION, KafkaSettings.class).clusters()) {
+        KafkaSettings kafka = parseOrNull(json, KafkaSettings.SECTION, KafkaSettings.class);
+        if (kafka == null) return;
+        for (KafkaSettings.Cluster c : kafka.clusters()) {
             String prefix = "kafka.clusters[" + c.name() + "].";
             props.put(prefix + "bootstrap-servers", c.bootstrapServers());
             props.put(prefix + "security-protocol", c.securityProtocol());
@@ -120,7 +110,7 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         }
     }
 
-    /** An unreadable saved section must not stop the application from starting: warn and ignore it. */
+    /** An unreadable saved section must not stop the application from starting. */
     private static <T> T parseOrNull(String json, String section, Class<T> type) {
         try {
             return AdminSettingsStore.parse(json, type);
@@ -135,7 +125,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         if (StringUtils.hasText(value)) props.put(key, value);
     }
 
-    /** OpenSearch connections saved in the admin console override {@code agent.mcp.os.*} from yml. */
     private static void addOpenSearch(ConfigurableEnvironment environment, Map<String, Object> props) {
         String json = readSection(environment, OpenSearchSettings.SECTION);
         if (json == null) return;
@@ -152,7 +141,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         }
     }
 
-    /** The metrics backend saved in the admin console overrides {@code agent.metrics.*} from yml. */
     private static void addMetrics(ConfigurableEnvironment environment, Map<String, Object> props) {
         String json = readSection(environment, MetricsSettings.SECTION);
         if (json == null) return;
@@ -165,7 +153,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         props.put("agent.metrics.tenant", m.tenant() == null ? "" : m.tenant());
     }
 
-    /** Existing {@code spring.autoconfigure.exclude} entries plus the LLM ones, without duplicates. */
     private static List<String> excludes(ConfigurableEnvironment environment) {
         List<String> excludes = new ArrayList<>();
         String existing = environment.getProperty("spring.autoconfigure.exclude", "");
@@ -194,11 +181,10 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         return new LlmSettings(null, null, null);
     }
 
-    /** The JSON payload of an admin settings section, or null when it was never saved. */
     private static String readSection(ConfigurableEnvironment environment, String section) {
         try (Connection conn = connect(environment)) {
             if (conn == null) return null;
-            try (java.sql.PreparedStatement ps = conn.prepareStatement(
+            try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT payload FROM admin_settings WHERE section = ?")) {
                 ps.setString(1, section);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -211,7 +197,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         }
     }
 
-    /** Any JDBC driver on the classpath works (PostgreSQL, H2); null when no datasource is configured. */
     private static Connection connect(ConfigurableEnvironment environment) throws Exception {
         String url = environment.getProperty("spring.datasource.url");
         if (!StringUtils.hasText(url)) {
@@ -226,7 +211,6 @@ public class LlmSettingsEnvironmentPostProcessor implements EnvironmentPostProce
         return DriverManager.getConnection(ifExists(url), credentials);
     }
 
-    /** jdbc:h2:file:./db  →  jdbc:h2:file:./db;IFEXISTS=TRUE. Other URLs are returned unchanged. */
     static String ifExists(String url) {
         if (!url.toLowerCase().startsWith("jdbc:h2:file:")) {
             return url;

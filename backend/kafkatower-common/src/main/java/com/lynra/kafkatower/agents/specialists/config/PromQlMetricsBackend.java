@@ -2,6 +2,7 @@ package com.lynra.kafkatower.agents.specialists.config;
 
 import com.embabel.agent.api.tool.Tool;
 import com.embabel.agent.api.tool.progressive.UnfoldingTool;
+import com.lynra.kafkatower.collections.CollectionPresenter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ import java.util.List;
 @Component
 public class PromQlMetricsBackend implements MetricsBackend {
 
+    private final PromQlClient client;
     private final PromQlQueryTools queryTools;
     private final boolean configured;
 
@@ -24,14 +26,16 @@ public class PromQlMetricsBackend implements MetricsBackend {
             @Value("${agent.metrics.token:}") String token,
             @Value("${agent.metrics.username:}") String username,
             @Value("${agent.metrics.password:}") String password,
-            @Value("${agent.metrics.tenant:}") String tenant) {
+            @Value("${agent.metrics.tenant:}") String tenant,
+            CollectionPresenter presenter) {
         this.configured = url != null && !url.isBlank();
-        this.queryTools = new PromQlQueryTools(url == null ? "" : url, token, username, password, tenant);
+        this.client = new PromQlClient(url == null ? "" : url, token, username, password, tenant);
+        this.queryTools = new PromQlQueryTools(client, presenter);
     }
 
     @Override
     public boolean isAvailable() {
-        return configured && queryTools.ping();
+        return configured && client.ping();
     }
 
     @Override

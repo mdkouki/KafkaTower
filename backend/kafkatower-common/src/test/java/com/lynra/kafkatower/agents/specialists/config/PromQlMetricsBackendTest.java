@@ -1,6 +1,8 @@
 package com.lynra.kafkatower.agents.specialists.config;
 
 import com.embabel.agent.api.tool.progressive.UnfoldingTool;
+import com.lynra.kafkatower.collections.CollectionPresenter;
+import com.lynra.kafkatower.collections.CollectionStore;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,6 +26,8 @@ class PromQlMetricsBackendTest {
     private final AtomicReference<String> lastAuth = new AtomicReference<>();
     private volatile int status = 200;
     private volatile String body = "{\"status\":\"success\",\"data\":[]}";
+    private final CollectionStore store = new CollectionStore(600, 200_000);
+    private final CollectionPresenter presenter = new CollectionPresenter(store, 5);
 
     @BeforeEach
     void startServer() throws IOException {
@@ -43,14 +49,18 @@ class PromQlMetricsBackendTest {
         server.stop(0);
     }
 
+    private PromQlClient client(String token) {
+        return new PromQlClient("http://127.0.0.1:" + server.getAddress().getPort(), token, "", "", "");
+    }
+
     private PromQlQueryTools tools(String token) {
-        return new PromQlQueryTools("http://127.0.0.1:" + server.getAddress().getPort(), token, "", "", "");
+        return new PromQlQueryTools(client(token), presenter);
     }
 
     @Test
     void exposesTheFiveMetricsTools() {
         PromQlMetricsBackend backend = new PromQlMetricsBackend(
-                "http://127.0.0.1:" + server.getAddress().getPort(), "", "", "", "");
+                "http://127.0.0.1:" + server.getAddress().getPort(), "", "", "", "", presenter);
 
         UnfoldingTool facade = backend.queryTools("metrics-query", "Kafka data", "Start with `metrics`.");
 
@@ -66,7 +76,7 @@ class PromQlMetricsBackendTest {
 
         String result = tools("").query("up{cluster=\"a\"}", "");
 
-        assertThat(result).isEqualTo(body);
+        assertThat(result).isEqualTo("resultType: vector\nSeries (0): (none)\n");
         assertThat(lastRequest.get()).startsWith("POST /api/v1/query ").contains("query=up%7Bcluster%3D%22a%22%7D")
                 .doesNotContain("time=");
     }
@@ -90,7 +100,8 @@ class PromQlMetricsBackendTest {
     void metricsFiltersNamesByCaseInsensitiveRegex() {
         body = "{\"status\":\"success\",\"data\":[\"kafka_brokers\",\"KMINION_lag\",\"up\"]}";
 
-        assertThat(tools("").metrics("kminion|brokers")).isEqualTo("kafka_brokers\nKMINION_lag");
+        assertThat(tools("").metrics("kminion|brokers"))
+                .isEqualTo("Metric names matching 'kminion|brokers' (2):\n  - kafka_brokers\n  - KMINION_lag\n");
     }
 
     @Test
@@ -100,15 +111,56 @@ class PromQlMetricsBackendTest {
         assertThat(tools("").metrics("kafka_.*")).contains("No metric names match 'kafka_.*'").doesNotStartWith("\n");
     }
 
+    private static final Pattern KEY = Pattern.compile("Collection key: ([0-9a-f]+)");
+
+    private List<String> storedList(String output) {
+        Matcher matcher = KEY.matcher(output);
+        assertThat(matcher.find()).as("a collection key in: " + output).isTrue();
+        return store.find(matcher.group(1)).orElseThrow();
+    }
+
     @Test
-    void metricsCapsTheListAndSaysSo() {
+    void metricsBeyondTheInlineLimitComeBackAsASnippetWithAKeyToTheFullList() {
         StringBuilder names = new StringBuilder();
         for (int i = 0; i < 250; i++) names.append(i == 0 ? "" : ",").append("\"m_").append(i).append('"');
         body = "{\"status\":\"success\",\"data\":[" + names + "]}";
 
         String result = tools("").metrics("m_");
 
-        assertThat(result).contains("250 metrics match; showing the first 200");
+        assertThat(result).startsWith("Metric names matching 'm_' (250):\n  - m_0\n").contains("  - m_4\n")
+                .doesNotContain("m_5\n").contains("245 more not shown");
+        assertThat(storedList(result)).hasSize(250).startsWith("m_0", "m_1").endsWith("m_249");
+    }
+
+    @Test
+    void labelValuesBeyondTheInlineLimitAreStoredToo() {
+        body = "{\"status\":\"success\",\"data\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"]}";
+
+        String result = tools("").labelValues("topic", "");
+
+        assertThat(result).startsWith("Values of label 'topic' (6):").contains("1 more not shown");
+        assertThat(storedList(result)).containsExactly("a", "b", "c", "d", "e", "f");
+    }
+
+    @Test
+    void queryWithFewSeriesListsThemAllWithoutAKey() {
+        body = "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":["
+                + "{\"metric\":{\"topic\":\"a\"},\"value\":[1,\"7\"]}]}}";
+
+        assertThat(tools("").query("up", "")).isEqualTo(
+                "resultType: vector\nSeries (1):\n  - {\"metric\":{\"topic\":\"a\"},\"value\":[1,\"7\"]}\n");
+    }
+
+    @Test
+    void queryWithManySeriesStoresTheWholeResult() {
+        StringBuilder series = new StringBuilder();
+        for (int i = 0; i < 8; i++) series.append(i == 0 ? "" : ",").append("{\"metric\":{\"p\":\"").append(i).append("\"}}");
+        body = "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[" + series + "]}}";
+
+        String result = tools("").queryRange("up", "1", "2", "30s");
+
+        assertThat(result).startsWith("resultType: matrix\nSeries (8):").contains("3 more not shown");
+        assertThat(storedList(result)).hasSize(8).contains("{\"metric\":{\"p\":\"7\"}}");
     }
 
     @Test
@@ -121,16 +173,16 @@ class PromQlMetricsBackendTest {
 
     @Test
     void bearerTokenIsSent() {
-        tools("secret-token").ping();
+        client("secret-token").ping();
 
         assertThat(lastAuth.get()).isEqualTo("Bearer secret-token");
     }
 
     @Test
     void pingReflectsReachability() {
-        assertThat(tools("").ping()).isTrue();
+        assertThat(client("").ping()).isTrue();
 
         status = 500;
-        assertThat(tools("").ping()).isFalse();
+        assertThat(client("").ping()).isFalse();
     }
 }

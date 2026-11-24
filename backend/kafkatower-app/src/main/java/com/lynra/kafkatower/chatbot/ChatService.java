@@ -41,12 +41,8 @@ public class ChatService {
         this.promptClassifier = promptClassifier;
     }
 
-    /**
-     * Opportunistic warm-up, not a correctness dependency: agent deployment and this listener
-     * both fire on {@code ContextRefreshedEvent} with no guaranteed relative order, so this may
-     * run before deployment completes. Leaving {@link #kafkaInspectorAgent} null here is safe —
-     * {@link #agent()}'s lazy fallback resolves it on first real request instead.
-     */
+    // Opportunistic warm-up: deployment and this listener both fire on ContextRefreshedEvent in no
+    // guaranteed order, so the agent may not be deployed yet; agent() resolves it lazily in that case.
     @EventListener(ContextRefreshedEvent.class)
     void init() {
         kafkaInspectorAgent = resolveAgent().orElse(null);
@@ -62,10 +58,8 @@ public class ChatService {
         if (kafkaInspectorAgent == null) {
             synchronized (this) {
                 if (kafkaInspectorAgent == null) {
-                    // Unlike init()'s opportunistic warm-up, a real request genuinely needing the
-                    // agent and still not finding it deployed is a real, throw-worthy error —
-                    // ContextRefreshedEvent dispatch (and therefore deployment) has unconditionally
-                    // finished by the time any request can reach here.
+                    // Unlike init(), a request that still finds no agent is a real error: deployment
+                    // has finished by the time any request can reach here.
                     kafkaInspectorAgent = resolveAgent()
                             .orElseThrow(() -> new IllegalStateException("KafkaInspector agent not deployed"));
                 }
@@ -82,27 +76,18 @@ public class ChatService {
 
         String messageWithHistory = buildMessageWithHistory(contextId, message);
 
-        // Analytics-only classification: fire-and-forget on its own pool so the answer never waits
-        // on it. Runs on the raw message (not messageWithHistory) and takes userId explicitly —
+        // Fire-and-forget analytics on its own pool; takes userId explicitly because
         // SecurityContextHolder is empty on the pool thread.
         promptClassifier.classifyAsync(message, userId);
 
         return Flux.<String>create(sink -> {
-            // AgentStatusEventListener and AgentPlanLogger are both Spring @Component beans —
-            // Embabel dispatches process-lifecycle events (creation, plan formulation) only to
-            // AgenticEventListener beans in the context, not to a listener attached via
-            // ProcessOptions.withListener(...), so there is nothing to build or attach here.
-            // AgentStatusEventListener scopes itself to this request with a ThreadLocal (see its
-            // Javadoc) — register/clear bracket the synchronous run() call below exactly like
-            // TokenStreamSink already does.
+            // Embabel dispatches lifecycle events only to AgenticEventListener beans, so nothing is
+            // attached to ProcessOptions; the status listener scopes itself to this request via a
+            // ThreadLocal, bracketed by register/clear around the synchronous run() below.
             AgentStatusEventListener.register(sink::next);
 
-            // AgentProcess.run() executes synchronously on this thread. KafkaInspector's own
-            // orchestration suppresses TokenStreamSink forwarding for the whole request (see
-            // KafkaInspector.answer / SubAgentTools.run), so in practice nothing is streamed
-            // here and the fallback below sends the final, already-guard-rail-validated answer
-            // as a single chunk. The registration stays in place for any future case where an
-            // agent streams outside that suppressed scope.
+            // KafkaInspector suppresses TokenStreamSink forwarding for the whole request, so in practice
+            // nothing streams here and the fallback below sends the final answer as one chunk.
             AtomicBoolean tokenStreamed = new AtomicBoolean(false);
             TokenStreamSink.register(token -> {
                 tokenStreamed.set(true);
@@ -112,17 +97,12 @@ public class ChatService {
                 AgentProcess process = agentPlatform.createAgentProcessFrom(
                         agent(), ProcessOptions.DEFAULT, new UserMessage(messageWithHistory));
                 process.run();
-                // resultOfType throws (rather than returning null) if the process didn't
-                // complete or didn't produce an AgentAnswer — AgentResultLogger logs the
-                // actual blackboard content in that case before the exception below hits the
-                // catch block and becomes a generic sink.error, so what the root agent actually
-                // produced is still visible in the logs.
+                // resultOfType throws if the process produced no AgentAnswer, after logging the
+                // blackboard content so the failure stays diagnosable.
                 AgentAnswer answer = AgentResultLogger.resultOfType(process, AgentAnswer.class, "root");
                 String answerText = answer.text();
                 saveToHistory(contextId, message, answerText);
                 if (!tokenStreamed.get()) {
-                    // Nothing was streamed (e.g. a static "unavailable" message bypassed the LLM) —
-                    // fall back to sending the whole answer as one chunk.
                     sink.next(answerText);
                 }
             } catch (Exception e) {

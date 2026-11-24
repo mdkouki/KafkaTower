@@ -1,16 +1,16 @@
 package com.lynra.kafkatower.security;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -24,7 +24,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +38,8 @@ public class SecurityConfig {
             "/api/feedback", "/api/auth/login", "/api/auth/logout",
             "/api/admin/**"
     };
+
+    private static final ApiAwareErrorHandler API_AWARE_ERROR_HANDLER = new ApiAwareErrorHandler();
 
     private final SecurityProperties securityProperties;
     private final Optional<LdapAuthenticationProvider> ldapAuthenticationProvider;
@@ -67,7 +68,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
-                .csrf(csrf -> csrf.disable());
+                .csrf(AbstractHttpConfigurer::disable);
 
         return http.build();
     }
@@ -75,19 +76,17 @@ public class SecurityConfig {
     @Bean
     @ConditionalOnProperty(name = "app.security.mode", havingValue = "jaas", matchIfMissing = true)
     public UserDetailsService userDetailsService() {
+        List<SecurityProperties.JaasConfig.User> configuredUsers = securityProperties.getJaas().getUsers();
         List<UserDetails> users = new ArrayList<>();
-
-        if (securityProperties.getJaas().getUsers() != null) {
-            for (SecurityProperties.JaasConfig.User user : securityProperties.getJaas().getUsers()) {
-                UserDetails userDetails = User.builder()
+        if (configuredUsers != null) {
+            for (SecurityProperties.JaasConfig.User user : configuredUsers) {
+                users.add(User.builder()
                         .username(user.getUsername())
                         .password(user.getPassword())
                         .roles(user.getRole())
-                        .build();
-                users.add(userDetails);
+                        .build());
             }
         }
-
         return new InMemoryUserDetailsManager(users);
     }
 
@@ -110,9 +109,7 @@ public class SecurityConfig {
     @Bean
     @ConditionalOnProperty(name = "app.security.mode", havingValue = "ldap")
     public SecurityFilterChain filterChainLdap(HttpSecurity http) throws Exception {
-        if (ldapAuthenticationProvider.isPresent()) {
-            http.authenticationProvider(ldapAuthenticationProvider.get());
-        }
+        ldapAuthenticationProvider.ifPresent(http::authenticationProvider);
         return configureJaasLdapSecurity(http);
     }
 
@@ -146,10 +143,8 @@ public class SecurityConfig {
                         .permitAll()
                 )
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint(this::handleAuthenticationException)
-                        .accessDeniedHandler((request, response, accessDeniedException) ->
-                                handleAccessDenied(request, response, accessDeniedException)
-                        )
+                        .authenticationEntryPoint(API_AWARE_ERROR_HANDLER)
+                        .accessDeniedHandler(API_AWARE_ERROR_HANDLER)
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
@@ -187,37 +182,8 @@ public class SecurityConfig {
                 "/", "/index.html", "/login", "/oauth2/**", "/api/auth/login", "/api/auth/logout",
                 "/api/auth/config", "/static/**", "/assets/**");
 
-        http.oauth2Login(oauth -> {
-        });
+        http.oauth2Login(Customizer.withDefaults());
 
         return http.build();
-    }
-
-    private void handleAuthenticationException(HttpServletRequest request, HttpServletResponse response,
-                                               org.springframework.security.core.AuthenticationException authException)
-            throws IOException {
-        if (isApiRequest(request)) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\": \"Unauthorized\"}");
-        } else {
-            response.sendRedirect("/");
-        }
-    }
-
-    private void handleAccessDenied(HttpServletRequest request, HttpServletResponse response,
-                                    org.springframework.security.access.AccessDeniedException accessDeniedException)
-            throws IOException {
-        if (isApiRequest(request)) {
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\": \"Forbidden\"}");
-        } else {
-            response.sendRedirect("/");
-        }
-    }
-
-    private boolean isApiRequest(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/api/");
     }
 }

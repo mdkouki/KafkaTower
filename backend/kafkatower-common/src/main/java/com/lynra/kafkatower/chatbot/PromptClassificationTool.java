@@ -7,11 +7,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
-/**
- * Records prompt-classification analytics. Called directly as a plain Java method from
- * {@code AsyncPromptClassifier} with a {@link com.lynra.kafkatower.agents.core.root.ClassificationResult}
- * produced by a separate, off-the-critical-path LLM call against {@code ROOT_ANALYTICS.md} — it is never invoked via
- * LLM tool-calling, so it intentionally carries no Embabel action/tool annotations.
+/*
+ * Called as a plain Java method from AsyncPromptClassifier, never via LLM tool-calling, so it
+ * carries no Embabel annotations.
  */
 @Component
 public class PromptClassificationTool {
@@ -24,20 +22,11 @@ public class PromptClassificationTool {
         this.analyticsService = analyticsService;
     }
 
-    /**
-     * @param theme       a short label describing what the user is asking about (e.g. 'consumer_lag', 'topic_ownership')
-     * @param keywords    2 to 5 lowercase keywords extracted from the question, comma-separated
-     * @param targetAgent name of the specialist(s) judged most relevant for analytics purposes only —
-     *                    this does not route: KafkaMetricsInspector, KafkaInvestigator, or
-     *                    KafkaLogInspector, or KafkaRegistryInspector
-     */
     public void classifyAndRecord(String theme, String keywords, String targetAgent) {
-        // Capture the user here, on the request thread — analyticsService.record runs async on a
-        // pool thread where SecurityContextHolder would be empty.
+        // Captured on the request thread: analyticsService.record runs async where SecurityContextHolder is empty.
         classifyAndRecord(theme, keywords, targetAgent, currentUserId());
     }
 
-    /** For callers already off the request thread, which captured {@code userId} beforehand. */
     public void classifyAndRecord(String theme, String keywords, String targetAgent, String userId) {
         analyticsService.record(theme, keywords, targetAgent, userId);
         log.debug("Analytics queued — theme: {}, keywords: {}, agent: {}", theme, keywords, targetAgent);

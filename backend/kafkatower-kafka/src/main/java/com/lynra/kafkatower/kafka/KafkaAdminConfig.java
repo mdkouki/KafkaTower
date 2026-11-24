@@ -17,6 +17,13 @@ import java.util.stream.Collectors;
 @EnableConfigurationProperties(KafkaAdminConfig.KafkaClustersProperties.class)
 public class KafkaAdminConfig {
 
+    private static final int REQUEST_TIMEOUT_MS = 5000;
+    private static final int DEFAULT_API_TIMEOUT_MS = 8000;
+    private static final String DEFAULT_STORE_TYPE = "PKCS12";
+    private static final String SCRAM_MECHANISM_PREFIX = "SCRAM";
+    private static final String SCRAM_LOGIN_MODULE = "org.apache.kafka.common.security.scram.ScramLoginModule";
+    private static final String PLAIN_LOGIN_MODULE = "org.apache.kafka.common.security.plain.PlainLoginModule";
+
     // NOTE: Map<String, AdminClient> injection first resolves as "every bean of type
     // AdminClient, keyed by bean name"; it only falls back to this bean itself because no
     // individual AdminClient bean currently exists. Adding one anywhere in the context would
@@ -29,12 +36,11 @@ public class KafkaAdminConfig {
     // sockets/metrics threads don't leak across a context refresh (devtools restarts, tests).
     @Bean(destroyMethod = "")
     public Map<String, AdminClient> kafkaAdminMap(KafkaClustersProperties properties) {
-        Map<String, AdminClient> clients = properties.getClusters().entrySet().stream()
+        return properties.getClusters().entrySet().stream()
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
                         e -> AdminClient.create(clientConfig(e.getValue()))
                 ));
-        return clients;
     }
 
     @Bean
@@ -42,7 +48,6 @@ public class KafkaAdminConfig {
         return new AdminClientsCloser(kafkaAdminMap);
     }
 
-    /** Closes every AdminClient in {@code kafkaAdminMap} when the application context shuts down. */
     public static final class AdminClientsCloser {
         private final Map<String, AdminClient> clients;
 
@@ -56,13 +61,12 @@ public class KafkaAdminConfig {
         }
     }
 
-    /** Connection/security settings for one cluster, valid for both AdminClient and Consumer. */
     public static Map<String, Object> clientConfig(KafkaClustersProperties.ClusterConfig cluster) {
         Map<String, Object> config = new HashMap<>();
         config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
         config.put(AdminClientConfig.SECURITY_PROTOCOL_CONFIG, cluster.getSecurityProtocol());
-        config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
-        config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 8000);
+        config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, REQUEST_TIMEOUT_MS);
+        config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, DEFAULT_API_TIMEOUT_MS);
 
         SslConfig ssl = cluster.getSsl();
         if (ssl != null) {
@@ -145,11 +149,11 @@ public class KafkaAdminConfig {
     public static class SslConfig {
         private String keystoreLocation;
         private String keystorePassword;
-        private String keystoreType = "PKCS12";
+        private String keystoreType = DEFAULT_STORE_TYPE;
         private String keyPassword;
         private String truststoreLocation;
         private String truststorePassword;
-        private String truststoreType = "PKCS12";
+        private String truststoreType = DEFAULT_STORE_TYPE;
 
         public String getKeystoreLocation() {
             return keystoreLocation;
@@ -252,10 +256,6 @@ public class KafkaAdminConfig {
             this.jaasConfig = jaasConfig;
         }
 
-        /**
-         * Returns {@code jaasConfig} verbatim if set, else builds the login module config from
-         * username/password: PlainLoginModule for PLAIN, ScramLoginModule for SCRAM-SHA-*.
-         */
         String resolveJaasConfig() {
             if (jaasConfig != null && !jaasConfig.isBlank()) {
                 return jaasConfig;
@@ -263,9 +263,9 @@ public class KafkaAdminConfig {
             if (username == null || username.isBlank()) {
                 return null;
             }
-            String module = mechanism != null && mechanism.toUpperCase().startsWith("SCRAM")
-                    ? "org.apache.kafka.common.security.scram.ScramLoginModule"
-                    : "org.apache.kafka.common.security.plain.PlainLoginModule";
+            String module = mechanism != null && mechanism.toUpperCase().startsWith(SCRAM_MECHANISM_PREFIX)
+                    ? SCRAM_LOGIN_MODULE
+                    : PLAIN_LOGIN_MODULE;
             return module + " required username=\"" + escape(username) + "\" password=\"" + escape(password) + "\";";
         }
 

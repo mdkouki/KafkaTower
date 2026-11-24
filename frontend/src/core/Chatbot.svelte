@@ -194,6 +194,7 @@
     analyzing_metrics: 'Analyzing metrics…',
     investigating_cluster: 'Investigating the cluster…',
     searching_logs: 'Searching logs…',
+    checking_dependencies: 'Checking dependencies…',
   };
 
   let isOpen = false;
