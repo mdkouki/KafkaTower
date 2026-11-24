@@ -2,6 +2,7 @@ package com.lynra.kafkatower.tools;
 
 import com.embabel.agent.api.annotation.EmbabelComponent;
 import com.embabel.agent.api.annotation.LlmTool;
+import com.lynra.kafkatower.collections.CollectionPresenter;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.lynra.kafkatower.model.AclGroupGrant;
 import com.lynra.kafkatower.model.ClusterAclGraph;
@@ -23,7 +24,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -40,16 +40,18 @@ import java.util.regex.PatternSyntaxException;
 public class RegistryQueryTools {
 
     private static final Logger log = LoggerFactory.getLogger(RegistryQueryTools.class);
-    private static final int MAX_ROWS = 100;
 
     private final TopicGraphStore topicStore;
     private final AclGraphStore aclStore;
     private final TopicGroupLagService groupLags;
+    private final CollectionPresenter presenter;
 
-    public RegistryQueryTools(TopicGraphStore topicStore, AclGraphStore aclStore, TopicGroupLagService groupLags) {
+    public RegistryQueryTools(TopicGraphStore topicStore, AclGraphStore aclStore, TopicGroupLagService groupLags,
+                              CollectionPresenter presenter) {
         this.topicStore = topicStore;
         this.aclStore = aclStore;
         this.groupLags = groupLags;
+        this.presenter = presenter;
     }
 
     @LlmTool(description = """
@@ -58,6 +60,7 @@ public class RegistryQueryTools {
             The regex is a Java regular expression applied unanchored (it matches anywhere in the
             name); anchor it yourself when needed, e.g. "^orders\\." for a prefix, "\\.dlq$" for a
             suffix, "^(orders|payments)\\..*" for several prefixes.
+            Lists longer than 5 come back as a count, a 5-item snippet and a collection key for bulkOperation.
             Parameter clusterName: name of the Kafka cluster.
             Parameter regex: required, non-empty Java regex matched against topic names.
             """)
@@ -77,14 +80,10 @@ public class RegistryQueryTools {
                     .sorted(Comparator.comparing(TopicDetail::name))
                     .toList();
             if (matches.isEmpty()) return "No topics match regex '" + regex + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Topics matching regex '").append(regex).append("' in '")
-                    .append(clusterName).append("' (").append(matches.size()).append("):\n");
-            matches.stream().limit(MAX_ROWS).forEach(t -> sb.append("  ").append(t.name())
-                    .append("  producers=").append(t.producers().size())
-                    .append(" consumers=").append(t.consumers().size()).append("\n"));
-            if (matches.size() > MAX_ROWS) sb.append("  ... ").append(matches.size() - MAX_ROWS)
-                    .append(" more — use a narrower regex.\n");
-            return sb.toString();
+            List<String> rows = matches.stream()
+                    .map(t -> t.name() + "  producers=" + t.producers().size() + " consumers=" + t.consumers().size())
+                    .toList();
+            return presenter.block("Topics matching regex '" + regex + "' in '" + clusterName + "'", rows);
         });
     }
 
@@ -101,8 +100,8 @@ public class RegistryQueryTools {
                     + "'. Use findTopics with a regex to find the exact name.";
             return "Topic '" + t.name() + "' on '" + clusterName + "': " + t.partitionCount() + " partitions, RF "
                     + t.replicationFactor() + (t.internal() ? ", internal" : "") + "\n"
-                    + "  producers (" + t.producers().size() + "): " + joined(t.producers()) + "\n"
-                    + "  consumers (" + t.consumers().size() + "): " + joined(t.consumers()) + "\n";
+                    + presenter.inline("  producers", sorted(t.producers())) + "\n"
+                    + presenter.inline("  consumers", sorted(t.consumers())) + "\n";
         });
     }
 
@@ -116,10 +115,10 @@ public class RegistryQueryTools {
     public String topicConsumerGroups(String clusterName, String topic) {
         try {
             List<String> rows = groupLags.groupsForTopic(clusterName, topic).stream()
-                    .map(g -> "  " + g.groupId() + "  state=" + g.state() + "  lag=" + g.lag())
+                    .map(g -> g.groupId() + "  state=" + g.state() + "  lag=" + g.lag())
                     .toList();
             if (rows.isEmpty()) return "No consumer group has offsets on '" + topic + "' in cluster '" + clusterName + "'.";
-            return "Consumer groups on '" + topic + "' (" + rows.size() + "):\n" + String.join("\n", rows) + "\n";
+            return presenter.block("Consumer groups on '" + topic + "'", rows);
         } catch (Exception e) {
             log.error("topicConsumerGroups failed for {} / {}", clusterName, topic, e);
             return "Error during operation: " + e.getClass().getSimpleName() + ": " + e.getMessage();
@@ -139,9 +138,7 @@ public class RegistryQueryTools {
                     .filter(p -> p.toLowerCase(Locale.ROOT).contains(q))
                     .sorted().toList();
             if (matches.isEmpty()) return "No principal matches '" + query + "' in cluster '" + clusterName + "'.";
-            String more = matches.size() > MAX_ROWS ? "\n  ... " + (matches.size() - MAX_ROWS) + " more — narrow the query." : "";
-            return "Principals matching '" + query + "' (" + matches.size() + "):\n  "
-                    + matches.stream().limit(MAX_ROWS).collect(Collectors.joining("\n  ")) + more + "\n";
+            return presenter.block("Principals matching '" + query + "' in '" + clusterName + "'", matches);
         });
     }
 
@@ -155,11 +152,12 @@ public class RegistryQueryTools {
         return withAclGraph(clusterName, graph -> {
             UserAclSummary u = graph.usersByPrincipal().get(principal);
             if (u == null) return unknownPrincipal(clusterName, principal);
+            List<String> groupGrants = u.consumerGroups().stream().map(RegistryQueryTools::groupGrant).toList();
             return "Principal '" + u.principal() + "' on '" + clusterName + "':\n"
-                    + "  produces to (" + u.produceTopics().size() + "): " + joined(u.produceTopics()) + "\n"
-                    + "  consumes from (" + u.consumeTopics().size() + "): " + joined(u.consumeTopics()) + "\n"
-                    + "  consumer groups: " + joined(u.consumerGroups().stream().map(RegistryQueryTools::groupGrant).toList()) + "\n"
-                    + "  transactional IDs: " + joined(u.transactionalIds()) + "\n";
+                    + presenter.inline("produces to", sorted(u.produceTopics())) + "\n"
+                    + presenter.inline("consumes from", sorted(u.consumeTopics())) + "\n"
+                    + presenter.inline("consumer groups", sorted(groupGrants)) + "\n"
+                    + presenter.inline("transactional IDs", sorted(u.transactionalIds())) + "\n";
         });
     }
 
@@ -173,17 +171,17 @@ public class RegistryQueryTools {
         return withAclGraph(clusterName, graph -> {
             PrincipalDependencies deps = PrincipalDependencyBuilder.build(graph, principal);
             if (deps == null) return unknownPrincipal(clusterName, principal);
-            StringBuilder sb = new StringBuilder("Dependencies of '").append(principal).append("' on '")
-                    .append(clusterName).append("':\n");
-            appendRelated(sb, "upstream (produce to topics it consumes)", deps.upstream());
-            appendRelated(sb, "downstream (consume topics it produces)", deps.downstream());
-            return sb.toString();
+            return "Dependencies of '" + principal + "' on '" + clusterName + "':\n"
+                    + related("upstream (produce to topics it consumes)", deps.upstream())
+                    + related("downstream (consume topics it produces)", deps.downstream());
         });
     }
 
-    private static void appendRelated(StringBuilder sb, String label, List<PrincipalDependencies.Related> related) {
-        sb.append("  ").append(label).append(" (").append(related.size()).append("):\n");
-        related.forEach(r -> sb.append("    ").append(r.principal()).append(" via ").append(joined(r.topics())).append("\n"));
+    private String related(String label, List<PrincipalDependencies.Related> related) {
+        List<String> rows = related.stream()
+                .map(r -> r.principal() + " via " + String.join(", ", sorted(r.topics())))
+                .toList();
+        return presenter.block(label, rows);
     }
 
     private String withTopicGraph(String clusterName, Function<ClusterTopicGraph, String> body) {
@@ -214,7 +212,7 @@ public class RegistryQueryTools {
         return g.prefixed() ? g.pattern() + "*" : g.pattern();
     }
 
-    private static String joined(List<String> values) {
-        return values.isEmpty() ? "(none)" : values.stream().sorted().collect(Collectors.joining(", "));
+    private static List<String> sorted(List<String> values) {
+        return values.stream().sorted().toList();
     }
 }

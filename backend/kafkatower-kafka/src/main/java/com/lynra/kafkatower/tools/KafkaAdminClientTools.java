@@ -2,6 +2,7 @@ package com.lynra.kafkatower.tools;
 
 import com.embabel.agent.api.annotation.LlmTool;
 import com.embabel.agent.api.annotation.EmbabelComponent;
+import com.lynra.kafkatower.collections.CollectionPresenter;
 import com.lynra.kafkatower.kafka.AdminClientErrors;
 import com.lynra.kafkatower.kafka.GroupInfo;
 import com.lynra.kafkatower.kafka.GroupLookupException;
@@ -34,12 +35,17 @@ public class KafkaAdminClientTools {
     private static final Logger log = LoggerFactory.getLogger(KafkaAdminClientTools.class);
     private static final int TIMEOUT_SEC = 10;
 
+    private static final String UNDER_REPLICATED_MARKER = "[UNDER-REPLICATED]";
+    private static final String CONTROLLER_MARKER = "[controller]";
+
     private final Map<String, AdminClient> kafkaAdminMap;
     private final GroupService groupService;
+    private final CollectionPresenter presenter;
 
-    public KafkaAdminClientTools(Map<String, AdminClient> kafkaAdminMap, GroupService groupService) {
+    public KafkaAdminClientTools(Map<String, AdminClient> kafkaAdminMap, GroupService groupService, CollectionPresenter presenter) {
         this.kafkaAdminMap = kafkaAdminMap;
         this.groupService = groupService;
+        this.presenter = presenter;
     }
 
     private AdminClient admin(String cluster) {
@@ -59,15 +65,10 @@ public class KafkaAdminClientTools {
             DescribeClusterResult result = admin(clusterName).describeCluster();
             Collection<Node> nodes = result.nodes().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             Node controller = result.controller().get(TIMEOUT_SEC, TimeUnit.SECONDS);
-            StringBuilder sb = new StringBuilder("Brokers in cluster '").append(clusterName)
-                    .append("' (").append(nodes.size()).append("):\n");
-            for (Node node : nodes) {
-                sb.append("  broker ").append(node.id())
-                        .append("  ").append(node.host()).append(":").append(node.port());
-                if (controller != null && node.id() == controller.id()) sb.append("  [controller]");
-                sb.append("\n");
-            }
-            return sb.toString();
+            List<String> rows = nodes.stream()
+                    .map(node -> brokerRow(node, controller))
+                    .toList();
+            return presenter.block("Brokers in cluster '" + clusterName + "'", rows);
         } catch (Exception e) {
             log.error("listBrokers failed for cluster: {}", clusterName, e);
             return errorMessage(e);
@@ -102,13 +103,13 @@ public class KafkaAdminClientTools {
                     .all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             Config config = configs.get(resource);
             if (config == null) return "Broker " + brokerId + " not found in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Broker ").append(brokerId).append(" configs:\n");
-            config.entries().stream()
+            List<String> rows = config.entries().stream()
                     .filter(e -> !e.isDefault() || e.source() == ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG)
                     .filter(e -> !isSensitiveConfig(e))
                     .sorted(Comparator.comparing(ConfigEntry::name))
-                    .forEach(e -> sb.append("  ").append(e.name()).append(" = ").append(e.value()).append("\n"));
-            return sb.toString();
+                    .map(KafkaAdminClientTools::configRow)
+                    .toList();
+            return presenter.block("Broker " + brokerId + " configs", rows);
         } catch (Exception e) {
             log.error("describeBrokerConfigs failed for broker {} in cluster: {}", brokerId, clusterName, e);
             return errorMessage(e);
@@ -151,10 +152,7 @@ public class KafkaAdminClientTools {
                     .collect(Collectors.toList());
             if (filtered.isEmpty())
                 return "No topics found matching regex '" + regex + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Topics in '").append(clusterName)
-                    .append("' matching regex '").append(regex).append("' (").append(filtered.size()).append("):\n");
-            filtered.forEach(t -> sb.append("  - ").append(t).append("\n"));
-            return sb.toString();
+            return presenter.block("Topics in '" + clusterName + "' matching regex '" + regex + "'", filtered);
         } catch (Exception e) {
             log.error("listTopics failed for cluster: {}", clusterName, e);
             return errorMessage(e);
@@ -163,7 +161,7 @@ public class KafkaAdminClientTools {
 
     @LlmTool(description = """
             Describe a topic: partition count, leaders, replicas, and ISR per partition.
-            Output is automatically compressed: full detail for <20 partitions, under-replicated only for 20-100, summary only for >100.
+            Large partition lists come back as a count, a short snippet and a collection key for bulkOperation.
             Parameter clusterName: name of the Kafka cluster.
             Parameter topicName: topic name.
             """)
@@ -177,51 +175,15 @@ public class KafkaAdminClientTools {
             if (topic == null) return "Topic '" + topicName + "' not found in cluster '" + clusterName + "'.";
 
             List<TopicPartitionInfo> partitions = topic.partitions();
-            int total = partitions.size();
-            List<TopicPartitionInfo> underReplicated = partitions.stream()
-                    .filter(p -> p.isr().size() < p.replicas().size())
-                    .collect(Collectors.toList());
-
-            StringBuilder sb = new StringBuilder("Topic: ").append(topicName)
-                    .append("  partitions: ").append(total)
-                    .append("  internal: ").append(topic.isInternal()).append("\n");
-
-            if (total <= 20) {
-                for (TopicPartitionInfo p : partitions) {
-                    sb.append("  partition ").append(p.partition())
-                            .append("  leader: ").append(p.leader() != null ? p.leader().id() : "none")
-                            .append("  replicas: ").append(nodeIds(p.replicas()))
-                            .append("  isr: ").append(nodeIds(p.isr()));
-                    if (p.isr().size() < p.replicas().size()) sb.append("  [UNDER-REPLICATED]");
-                    sb.append("\n");
-                }
-            } else if (total <= 100) {
-                sb.append("  (showing only under-replicated partitions)\n");
-                if (underReplicated.isEmpty()) {
-                    sb.append("  All ").append(total).append(" partitions are fully replicated.\n");
-                } else {
-                    for (TopicPartitionInfo p : underReplicated) {
-                        sb.append("  partition ").append(p.partition())
-                                .append("  leader: ").append(p.leader() != null ? p.leader().id() : "none")
-                                .append("  replicas: ").append(nodeIds(p.replicas()))
-                                .append("  isr: ").append(nodeIds(p.isr()))
-                                .append("  [UNDER-REPLICATED]\n");
-                    }
-                }
-            } else {
-                int healthy = total - underReplicated.size();
-                sb.append("  (summary only — ").append(total).append(" partitions)\n")
-                        .append("  healthy: ").append(healthy)
-                        .append("  under-replicated: ").append(underReplicated.size()).append("\n");
-                if (!underReplicated.isEmpty()) {
-                    sb.append("  under-replicated IDs: ")
-                            .append(underReplicated.stream()
-                                    .map(p -> String.valueOf(p.partition()))
-                                    .collect(Collectors.joining(", ")))
-                            .append("\n");
-                }
-            }
-            return sb.toString();
+            long underReplicated = partitions.stream().filter(KafkaAdminClientTools::isUnderReplicated).count();
+            List<String> rows = partitions.stream()
+                    .map(KafkaAdminClientTools::partitionReplicationRow)
+                    .toList();
+            return "Topic: " + topicName
+                    + "  partitions: " + partitions.size()
+                    + "  internal: " + topic.isInternal()
+                    + "  under-replicated: " + underReplicated
+                    + "\n" + presenter.block("Partitions", rows);
         } catch (Exception e) {
             log.error("describeTopic failed for topic {} in cluster: {}", topicName, clusterName, e);
             return errorMessage(e);
@@ -238,13 +200,13 @@ public class KafkaAdminClientTools {
                     .all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             Config config = configs.get(resource);
             if (config == null) return "Topic '" + topicName + "' not found in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Configs for topic '").append(topicName).append("':\n");
-            config.entries().stream()
+            List<String> rows = config.entries().stream()
                     .filter(e -> e.source() == ConfigEntry.ConfigSource.DYNAMIC_TOPIC_CONFIG || !e.isDefault())
                     .filter(e -> !isSensitiveConfig(e))
                     .sorted(Comparator.comparing(ConfigEntry::name))
-                    .forEach(e -> sb.append("  ").append(e.name()).append(" = ").append(e.value()).append("\n"));
-            return sb.toString();
+                    .map(KafkaAdminClientTools::configRow)
+                    .toList();
+            return presenter.block("Configs for topic '" + topicName + "'", rows);
         } catch (Exception e) {
             log.error("describeTopicConfigs failed for topic {} in cluster: {}", topicName, clusterName, e);
             return errorMessage(e);
@@ -262,8 +224,9 @@ public class KafkaAdminClientTools {
             For each matching topic, only configs whose name satisfies configNamePattern are
             returned, using the same exact/prefix/regex rule; pass "" or "*" to return all
             non-default configs.
-            Output is capped at maxTopics matching topics to keep the response bounded — narrow
-            topicNamePattern and re-run if the result says it was truncated.
+            At most maxTopics matching topics are described to bound broker load; the result says
+            so when it was truncated — narrow topicNamePattern and re-run.
+            Large result lists come back as a count, a short snippet and a collection key for bulkOperation.
             Parameter clusterName: name of the Kafka cluster.
             Parameter topicNamePattern: topic name filter — exact name, prefix, or regex; "" or "*" for all topics.
             Parameter configNamePattern: config key filter — exact name, prefix, or regex; "" or "*" for all non-default configs.
@@ -298,24 +261,20 @@ public class KafkaAdminClientTools {
                         .append(" total matched, showing first ").append(maxTopics).append(")");
             sb.append(":\n");
 
-            int reportedTopics = 0;
+            List<String> rows = new ArrayList<>();
             for (String topicName : toDescribe) {
                 Config config = configs.get(new ConfigResource(ConfigResource.Type.TOPIC, topicName));
                 if (config == null) continue;
-                List<ConfigEntry> matchingEntries = config.entries().stream()
+                config.entries().stream()
                         .filter(e -> e.source() == ConfigEntry.ConfigSource.DYNAMIC_TOPIC_CONFIG || !e.isDefault())
                         .filter(e -> !isSensitiveConfig(e))
                         .filter(e -> matchesPattern(e.name(), configNamePattern))
                         .sorted(Comparator.comparing(ConfigEntry::name))
-                        .collect(Collectors.toList());
-                if (matchingEntries.isEmpty()) continue;
-                reportedTopics++;
-                sb.append("  ").append(topicName).append(":\n");
-                matchingEntries.forEach(e -> sb.append("    ").append(e.name()).append(" = ").append(e.value()).append("\n"));
+                        .forEach(e -> rows.add(topicName + ": " + configRow(e)));
             }
-            if (reportedTopics == 0)
-                sb.append("  (none of the matched topics have a config matching '").append(configNamePattern).append("')\n");
-            return sb.toString();
+            if (rows.isEmpty())
+                return sb.append("  (none of the matched topics have a config matching '").append(configNamePattern).append("')\n").toString();
+            return sb.append(presenter.block("Topic configs", rows)).toString();
         } catch (Exception e) {
             log.error("describeTopicConfigsBulk failed for pattern {} in cluster: {}", topicNamePattern, clusterName, e);
             return errorMessage(e);
@@ -343,16 +302,15 @@ public class KafkaAdminClientTools {
             segment.bytes, ...). eq/ne/contains compare as strings and also work for fields like
             cleanup.policy. A topic whose field can't be read (unknown config name, or a non-numeric
             value compared with a numeric operator) is silently excluded, not reported as a match.
-            Output is capped at maxTopics matching topics.
+            Large result lists come back as a count, a short snippet and a collection key for bulkOperation.
             Parameter clusterName: name of the Kafka cluster.
             Parameter topicNamePattern: optional topic name pre-filter; "" or "*" for all topics.
             Parameter field: "partitions", "replicationFactor", or a topic config name.
             Parameter operator: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains".
             Parameter value: the value to compare against, e.g. "50", "3", "86400000", "compact".
-            Parameter maxTopics: safety cap on number of matching topics returned, e.g. 50.
             """)
     @CachedTool(ttlSeconds = 30)
-    public String findTopicsByCriteria(String clusterName, String topicNamePattern, String field, String operator, String value, int maxTopics) {
+    public String findTopicsByCriteria(String clusterName, String topicNamePattern, String field, String operator, String value) {
         try {
             Set<String> allTopics = admin(clusterName).listTopics().names().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             List<String> candidates = allTopics.stream()
@@ -434,11 +392,7 @@ public class KafkaAdminClientTools {
             if (unreadable > 0) sb.append(", ").append(unreadable).append(" excluded (field not found or not numeric)");
             sb.append("\n");
 
-            boolean truncated = matched.size() > maxTopics;
-            (truncated ? matched.subList(0, maxTopics) : matched).forEach(m -> sb.append("  - ").append(m).append("\n"));
-            if (truncated)
-                sb.append("  (truncated — showing first ").append(maxTopics).append(" of ").append(matched.size()).append(" matches)\n");
-            return sb.toString();
+            return sb.append(presenter.block("Matching topics", matched)).toString();
         } catch (Exception e) {
             log.error("findTopicsByCriteria failed for field {} in cluster: {}", field, clusterName, e);
             return errorMessage(e);
@@ -469,19 +423,10 @@ public class KafkaAdminClientTools {
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> latest = admin(clusterName)
                     .listOffsets(latestSpecs).all().get(TIMEOUT_SEC, TimeUnit.SECONDS);
 
-            StringBuilder sb = new StringBuilder("Partitions for topic '").append(topicName)
-                    .append("' (").append(partitions.size()).append(" partitions):\n");
-            for (TopicPartitionInfo p : partitions) {
-                TopicPartition tp = new TopicPartition(topicName, p.partition());
-                long start = earliest.containsKey(tp) ? earliest.get(tp).offset() : -1;
-                long end = latest.containsKey(tp) ? latest.get(tp).offset() : -1;
-                sb.append("  partition ").append(p.partition())
-                        .append("  earliest=").append(start)
-                        .append("  latest=").append(end)
-                        .append("  size=").append(start >= 0 && end >= 0 ? end - start : "?")
-                        .append("\n");
-            }
-            return sb.toString();
+            List<String> rows = partitions.stream()
+                    .map(p -> partitionOffsetsRow(topicName, p, earliest, latest))
+                    .toList();
+            return presenter.block("Partitions for topic '" + topicName + "'", rows);
         } catch (Exception e) {
             log.error("listTopicPartitions failed for topic {} in cluster: {}", topicName, clusterName, e);
             return errorMessage(e);
@@ -525,10 +470,7 @@ public class KafkaAdminClientTools {
                     .collect(Collectors.toList());
             if (groups.isEmpty())
                 return "No consumer groups found matching regex '" + regex + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("Consumer groups in '").append(clusterName)
-                    .append("' matching regex '").append(regex).append("' (").append(groups.size()).append("):\n");
-            groups.forEach(g -> sb.append("  - ").append(g).append("\n"));
-            return sb.toString();
+            return presenter.block("Consumer groups in '" + clusterName + "' matching regex '" + regex + "'", groups);
         } catch (Exception e) {
             log.error("listConsumerGroups failed for cluster: {}", clusterName, e);
             return errorMessage(e);
@@ -547,23 +489,14 @@ public class KafkaAdminClientTools {
             GroupInfo info = groupService.getGroupState(groupId, clusterName);
             if (info == null) return "Consumer group '" + groupId + "' not found in cluster '" + clusterName + "'.";
 
-            StringBuilder sb = new StringBuilder("Consumer group: ").append(groupId)
-                    .append("\n  state: ").append(info.state())
-                    .append("\n  coordinator: ").append(info.coordinator() != null ? info.coordinator() : "unknown")
-                    .append("\n  assignor: ").append(info.assignor())
-                    .append("\n  members: ").append(info.members().size()).append("\n");
-
-            if (info.members().size() <= 50) {
-                for (GroupInfo.MemberInfo m : info.members()) {
-                    sb.append("  member ").append(m.clientId())
-                            .append(" @ ").append(m.host())
-                            .append("  assignments: ").append(String.join(", ", m.assignedPartitions()))
-                            .append("\n");
-                }
-            } else {
-                sb.append("  (member list truncated — ").append(info.members().size()).append(" members total)\n");
-            }
-            return sb.toString();
+            List<String> memberRows = info.members().stream()
+                    .map(m -> m.clientId() + " @ " + m.host() + "  assignments: " + String.join(", ", m.assignedPartitions()))
+                    .toList();
+            return "Consumer group: " + groupId
+                    + "\n  state: " + info.state()
+                    + "\n  coordinator: " + (info.coordinator() != null ? info.coordinator() : "unknown")
+                    + "\n  assignor: " + info.assignor()
+                    + "\n" + presenter.block("Members", memberRows);
         } catch (GroupLookupException e) {
             log.error("describeConsumerGroup failed for group {} in cluster: {}", groupId, clusterName, e);
             return e.getMessage();
@@ -594,14 +527,14 @@ public class KafkaAdminClientTools {
                 if (worst == null || pl.lag() > worst.lag()) worst = pl;
             }
 
+            List<String> lagRows = lagByTopic.entrySet().stream()
+                    .map(e -> e.getKey() + " = " + e.getValue())
+                    .toList();
             StringBuilder sb = new StringBuilder("Consumer group '").append(groupId).append("' offsets summary:\n")
                     .append("  total partitions committed: ").append(info.partitionLags().size()).append("\n")
                     .append("  total lag (sum across committed partitions): ").append(info.totalLag()).append("\n")
-                    .append("  lag by topic: ").append(lagByTopic).append("\n")
-                    .append("  assigned but never committed: ").append(info.neverCommittedPartitions().size()).append("\n");
-            if (!info.neverCommittedPartitions().isEmpty()) {
-                sb.append("  never-committed: ").append(String.join(", ", info.neverCommittedPartitions())).append("\n");
-            }
+                    .append(presenter.block("Lag by topic", lagRows))
+                    .append(presenter.inline("assigned but never committed", info.neverCommittedPartitions())).append("\n");
             if (worst != null) {
                 sb.append("  worst-lag partition: ").append(worst.topic()).append("-").append(worst.partition())
                         .append("  committed=").append(worst.committedOffset())
@@ -638,18 +571,15 @@ public class KafkaAdminClientTools {
             Collection<AclBinding> acls = admin(clusterName)
                     .describeAcls(filter).values().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             if (acls.isEmpty()) return "No ACLs found for principal '" + principal + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("ACLs for principal '").append(principal)
-                    .append("' (").append(acls.size()).append("):\n");
-            acls.stream()
+            List<String> rows = acls.stream()
                     .sorted(Comparator.comparing(a -> a.pattern().name()))
-                    .forEach(a -> sb.append("  ")
-                            .append(a.pattern().resourceType()).append(":").append(a.pattern().name())
-                            .append("  pattern:").append(a.pattern().patternType())
-                            .append("  op:").append(a.entry().operation())
-                            .append("  permission:").append(a.entry().permissionType())
-                            .append("  host:").append(a.entry().host())
-                            .append("\n"));
-            return sb.toString();
+                    .map(a -> a.pattern().resourceType() + ":" + a.pattern().name()
+                            + "  pattern:" + a.pattern().patternType()
+                            + "  op:" + a.entry().operation()
+                            + "  permission:" + a.entry().permissionType()
+                            + "  host:" + a.entry().host())
+                    .toList();
+            return presenter.block("ACLs for principal '" + principal + "'", rows);
         } catch (Exception e) {
             log.error("listAclsForPrincipal failed for principal {} in cluster: {}", principal, clusterName, e);
             return errorMessage(e);
@@ -669,17 +599,15 @@ public class KafkaAdminClientTools {
             Collection<AclBinding> acls = admin(clusterName)
                     .describeAcls(filter).values().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             if (acls.isEmpty()) return "No ACLs found for topic '" + topicName + "' in cluster '" + clusterName + "'.";
-            StringBuilder sb = new StringBuilder("ACLs for topic '").append(topicName)
-                    .append("' (").append(acls.size()).append("):\n");
-            acls.stream()
+            List<String> rows = acls.stream()
                     .sorted(Comparator.comparing(a -> a.entry().principal()))
-                    .forEach(a -> sb.append("  principal:").append(a.entry().principal())
-                            .append("  pattern:").append(a.pattern().patternType())
-                            .append("  op:").append(a.entry().operation())
-                            .append("  permission:").append(a.entry().permissionType())
-                            .append("  host:").append(a.entry().host())
-                            .append("\n"));
-            return sb.toString();
+                    .map(a -> "principal:" + a.entry().principal()
+                            + "  pattern:" + a.pattern().patternType()
+                            + "  op:" + a.entry().operation()
+                            + "  permission:" + a.entry().permissionType()
+                            + "  host:" + a.entry().host())
+                    .toList();
+            return presenter.block("ACLs for topic '" + topicName + "'", rows);
         } catch (Exception e) {
             log.error("listAclsForTopic failed for topic {} in cluster: {}", topicName, clusterName, e);
             return errorMessage(e);
@@ -699,7 +627,7 @@ public class KafkaAdminClientTools {
             Map<ClientQuotaEntity, Map<String, Double>> quotas = admin(clusterName)
                     .describeClientQuotas(filter).entities().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             if (quotas.isEmpty()) return "No quotas found for user '" + userName + "' in cluster '" + clusterName + "'.";
-            return formatQuotas(quotas);
+            return describeQuotas("Quotas for user '" + userName + "'", quotas);
         } catch (Exception e) {
             log.error("describeClientQuotaByUser failed for user {} in cluster: {}", userName, clusterName, e);
             return errorMessage(e);
@@ -715,7 +643,7 @@ public class KafkaAdminClientTools {
             Map<ClientQuotaEntity, Map<String, Double>> quotas = admin(clusterName)
                     .describeClientQuotas(filter).entities().get(TIMEOUT_SEC, TimeUnit.SECONDS);
             if (quotas.isEmpty()) return "No quotas found for client-id '" + clientId + "' in cluster '" + clusterName + "'.";
-            return formatQuotas(quotas);
+            return describeQuotas("Quotas for client-id '" + clientId + "'", quotas);
         } catch (Exception e) {
             log.error("describeClientQuotaByClientId failed for clientId {} in cluster: {}", clientId, clusterName, e);
             return errorMessage(e);
@@ -765,18 +693,55 @@ public class KafkaAdminClientTools {
         }
     }
 
-    private String nodeIds(List<Node> nodes) {
+    private static String nodeIds(List<Node> nodes) {
         return nodes.stream().map(n -> String.valueOf(n.id())).collect(Collectors.joining(",", "[", "]"));
     }
 
-    private String formatQuotas(Map<ClientQuotaEntity, Map<String, Double>> quotas) {
-        StringBuilder sb = new StringBuilder();
-        quotas.forEach((entity, values) -> {
-            sb.append("Entity: ").append(entity.entries()).append("\n");
-            values.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .forEach(e -> sb.append("  ").append(e.getKey()).append(" = ").append(e.getValue()).append("\n"));
-        });
-        return sb.toString();
+    private String describeQuotas(String title, Map<ClientQuotaEntity, Map<String, Double>> quotas) {
+        List<String> rows = quotas.entrySet().stream()
+                .map(e -> quotaRow(e.getKey(), e.getValue()))
+                .toList();
+        return presenter.block(title, rows);
+    }
+
+    private static String quotaRow(ClientQuotaEntity entity, Map<String, Double> values) {
+        String quotaValues = values.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> e.getKey() + " = " + e.getValue())
+                .collect(Collectors.joining(", "));
+        return entity.entries() + ": " + quotaValues;
+    }
+
+    private static String configRow(ConfigEntry entry) {
+        return entry.name() + " = " + entry.value();
+    }
+
+    private static String partitionReplicationRow(TopicPartitionInfo p) {
+        String row = "partition " + p.partition()
+                + "  leader: " + (p.leader() != null ? p.leader().id() : "none")
+                + "  replicas: " + nodeIds(p.replicas())
+                + "  isr: " + nodeIds(p.isr());
+        return isUnderReplicated(p) ? row + "  " + UNDER_REPLICATED_MARKER : row;
+    }
+
+    private static boolean isUnderReplicated(TopicPartitionInfo p) {
+        return p.isr().size() < p.replicas().size();
+    }
+
+    private static String brokerRow(Node node, Node controller) {
+        String row = "broker " + node.id() + "  " + node.host() + ":" + node.port();
+        return controller != null && node.id() == controller.id() ? row + "  " + CONTROLLER_MARKER : row;
+    }
+
+    private static String partitionOffsetsRow(String topicName, TopicPartitionInfo p,
+                                              Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> earliest,
+                                              Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> latest) {
+        TopicPartition tp = new TopicPartition(topicName, p.partition());
+        long start = earliest.containsKey(tp) ? earliest.get(tp).offset() : -1;
+        long end = latest.containsKey(tp) ? latest.get(tp).offset() : -1;
+        return "partition " + p.partition()
+                + "  earliest=" + start
+                + "  latest=" + end
+                + "  size=" + (start >= 0 && end >= 0 ? end - start : "?");
     }
 }

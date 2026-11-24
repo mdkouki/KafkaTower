@@ -13,6 +13,9 @@ import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientProvider;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
+import com.lynra.kafkatower.collections.FullListEnforcer;
+import com.lynra.kafkatower.collections.UnreadCollectionTracker;
+import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.OpenSearchQueryTools;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
@@ -39,14 +42,17 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
 
     private final OpenSearchClientRegistry registry;
     private final OpenSearchQueryTools queryTools;
+    private final BulkCollectionTools bulkCollectionTools;
     private final long slowCallThresholdMs;
     private String basePrompt;
     private volatile String sharedGuidance;
 
     public KafkaLogInspector(OpenSearchClientRegistry registry, OpenSearchQueryTools queryTools,
+                              BulkCollectionTools bulkCollectionTools,
                               @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.registry = registry;
         this.queryTools = queryTools;
+        this.bulkCollectionTools = bulkCollectionTools;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
 
@@ -118,13 +124,15 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         // specialist's own token stream is suppressed by the caller anyway
         // (SubAgentTools.run), so streaming bought nothing here and risked the LLM never
         // actually reaching search_documents/aggregate_documents/get_document.
+        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "log answer", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
+                FullListEnforcer.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt() + "\n\nYou are querying cluster '" + provider.clusterName() + "'.")
                         .withToolObject(queryTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
+                        .withToolObject(bulkCollectionTools)
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
+                        question.text(), unreadCollections));
         log.info("Log inspection completed for cluster '{}'", provider.clusterName());
         String prefix = resolution.note() != null ? "(" + resolution.note() + ")\n\n" : "";
         return new LogAnswer(prefix + response);

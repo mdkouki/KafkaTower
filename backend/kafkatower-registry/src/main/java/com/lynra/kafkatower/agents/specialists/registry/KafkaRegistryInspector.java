@@ -9,6 +9,9 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
+import com.lynra.kafkatower.collections.FullListEnforcer;
+import com.lynra.kafkatower.collections.UnreadCollectionTracker;
+import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.RegistryQueryTools;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
@@ -34,13 +37,16 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
     private static final Logger log = LoggerFactory.getLogger(KafkaRegistryInspector.class);
 
     private final RegistryQueryTools queryTools;
+    private final BulkCollectionTools bulkCollectionTools;
     private final long slowCallThresholdMs;
     private String basePrompt;
     private volatile String sharedGuidance;
 
     public KafkaRegistryInspector(RegistryQueryTools queryTools,
+                                  BulkCollectionTools bulkCollectionTools,
                                   @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.queryTools = queryTools;
+        this.bulkCollectionTools = bulkCollectionTools;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
 
@@ -68,13 +74,15 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
     public RegistryAnswer answer(RegistryQuestion question, Ai ai) {
         log.info("Registry inspection request: \"{}\"", question.text());
         // Non-streaming on purpose, same reasoning as KafkaLogInspector.searchLogs.
+        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "registry answer", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
+                FullListEnforcer.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt())
                         .withToolObject(queryTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
+                        .withToolObject(bulkCollectionTools)
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
+                        question.text(), unreadCollections));
         return new RegistryAnswer(response);
     }
 

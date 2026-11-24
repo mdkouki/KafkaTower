@@ -28,7 +28,17 @@ instead of trying to call it.
 
 ## Cluster Name Resolution
 
-Every ask* tool needs a real cluster name as a question parameter.
+Every ask* tool needs a real cluster name, and it must be written INSIDE the `question` text
+(e.g. "In cluster kafka-nonprod: list topics containing fulfillment"). `question` is the only
+parameter an ask* tool has — a separate `cluster_name` argument is ignored, and a specialist whose
+question does not name the cluster will answer by asking which cluster is meant.
+
+Configured clusters: {{CLUSTERS}}. The user describes the cluster in their own words ("kafka non
+prod", "nonprod", "the prod one"). You decide which configured cluster they mean and write that
+exact name from the list in the question. Do not pass the user's wording on, and do not call
+`listClusters` when the list already makes the match clear. Several plausible matches or none →
+`listClusters`, or ask the user.
+
 - **listClusters** lists the real cluster names, optionally fuzzy-matched against a name the
   user mentioned. If you are not 100% sure of the exact name the user means, call it FIRST
   (pass what the user said, even a fragment or guess, as the query) and use the top match —

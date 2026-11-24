@@ -56,7 +56,7 @@ public class EnrichedSubAgentTools {
         return Tool.Companion.of(
                 specialist.toolName(),
                 delegate.toolDescription(specialist),
-                Tool.InputSchema.of(Tool.Parameter.string("question", "Self-contained question for this specialist")),
+                Tool.InputSchema.of(Tool.Parameter.string("question", "Self-contained question for this specialist, with the exact cluster name written inside it")),
                 Tool.Metadata.DEFAULT,
                 (Tool.Function) input -> Tool.Result.text(delegate.ask(specialist, withPriorFindings(questionFrom(input)))));
     }

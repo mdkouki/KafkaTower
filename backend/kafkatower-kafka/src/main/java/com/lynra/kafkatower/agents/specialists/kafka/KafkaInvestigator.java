@@ -1,5 +1,7 @@
 package com.lynra.kafkatower.agents.specialists.kafka;
 
+import com.lynra.kafkatower.collections.FullListEnforcer;
+import com.lynra.kafkatower.collections.UnreadCollectionTracker;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.AchievesGoal;
@@ -12,6 +14,7 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
+import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.KafkaAdminClientTools;
 import com.lynra.kafkatower.tools.MetricsSkillTools;
 import com.lynra.kafkatower.utils.SkillLoader;
@@ -37,6 +40,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
 
     private final KafkaAdminClientTools kafkaAdminClientTools;
     private final MetricsSkillTools metricsSkillTools;
+    private final BulkCollectionTools bulkCollectionTools;
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
@@ -45,10 +49,12 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
 
     public KafkaInvestigator(KafkaAdminClientTools kafkaAdminClientTools,
                              MetricsSkillTools metricsSkillTools,
+                             BulkCollectionTools bulkCollectionTools,
                              MetricsBackend metricsBackend,
                              @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.kafkaAdminClientTools = kafkaAdminClientTools;
         this.metricsSkillTools = metricsSkillTools;
+        this.bulkCollectionTools = bulkCollectionTools;
         this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
@@ -96,15 +102,22 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 Produce a faithful, complete summary of every relevant admin finding (do not
                 omit findings for brevity) — this summary is the ONLY record the next step will
                 have of what you found; nothing else about this step carries forward.
-                """;
+
+                End with exactly one last line. `%1$s yes` if answering the question needs metric
+                history (trends, rates, growth, when something started) or narrowing by metrics.
+                `%1$s no` if the admin findings fully answer it (current state, counts, lists,
+                configs, ACLs, quotas).
+                """.formatted(AdminSnapshot.VERDICT_LABEL);
+        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "investigation admin state", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
+                FullListEnforcer.answer(ai.withAutoLlm()
                         .withSystemPrompt(prompt)
                         .withToolObject(kafkaAdminClientTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
-        return new AdminSnapshot(response);
+                        .withToolObject(bulkCollectionTools)
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
+                        question.text(), unreadCollections));
+        return AdminSnapshot.fromResponse(response);
     }
 
     /**
@@ -119,6 +132,12 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
             metrics surface (Entity-Scale Discipline). Runs after gatherAdminState.
             """)
     public MetricsCorrelation correlateMetrics(InvestigationQuestion question, AdminSnapshot adminSnapshot, Ai ai) {
+        if (!adminSnapshot.metricsNeeded()) {
+            return MetricsCorrelation.notNeeded();
+        }
+        if (!metricsBackend.isAvailable()) {
+            return MetricsCorrelation.unavailable(metricsBackend.unavailableMessage());
+        }
         String base = systemPrompt() + "\n\n" + """
                 You are running the SECOND step of a two-step investigation. Here is the admin
                 ground truth already gathered in step one — treat it as established fact, do not
@@ -140,21 +159,16 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         // call path never re-evaluates ToolInjectionStrategy between rounds, so UnfoldingTool's
         // facade-then-real-tools swap can't work over it. This specialist's own token stream is
         // suppressed by the caller anyway (SubAgentTools.run), so streaming bought nothing here.
+        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "investigation metrics correlation", slowCallThresholdMs, () ->
-                runner
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
+                FullListEnforcer.answer(runner
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
+                        question.text(), unreadCollections));
         return new MetricsCorrelation(response);
     }
 
     private PromptRunner correlationRunner(Ai ai, String base) {
-        if (!metricsBackend.isAvailable()) {
-            return ai.withAutoLlm()
-                    .withSystemPrompt(withMetricsUnavailableNote(base, metricsBackend.unavailableMessage()))
-                    .withToolObject(kafkaAdminClientTools)
-                    .withToolObject(metricsSkillTools);
-        }
         UnfoldingTool metricsTools = metricsBackend.queryTools(
                 "metrics-investigation",
                 "correlating live Kafka state with metric trends",
@@ -163,13 +177,9 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         return ai.withAutoLlm()
                 .withSystemPrompt(base)
                 .withToolObject(kafkaAdminClientTools)
+                .withToolObject(bulkCollectionTools)
                 .withToolObject(metricsSkillTools)
                 .withTool(metricsTools);
-    }
-
-    static String withMetricsUnavailableNote(String base, String unavailableMessage) {
-        return base + "\n\nNOTE: " + unavailableMessage +
-                " Do not attempt to query metrics; note this limitation in your summary.";
     }
 
     @AchievesGoal(description = "Full issue analysis and root cause found")
@@ -180,7 +190,8 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     public InvestigationAnswer synthesizeInvestigation(InvestigationQuestion question, AdminSnapshot adminSnapshot,
                                                          MetricsCorrelation metricsCorrelation, Ai ai) {
         String prompt = systemPrompt() + "\n\n" + """
-                You are running the THIRD and FINAL step. Write the Kafka Investigation Report
+                You are running the THIRD and FINAL step. You have no tools in this step: do not call or
+                describe any tool. Write the Kafka Investigation Report
                 using only the evidence below — do not invent findings not present in either
                 section. Follow the Output Format in the skill above exactly.
 

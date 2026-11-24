@@ -3,19 +3,15 @@ package com.lynra.kafkatower.agents.specialists.config;
 import com.embabel.agent.api.annotation.LlmTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
+import com.lynra.kafkatower.collections.CollectionPresenter;
 import com.lynra.kafkatower.utils.ToolResponseTruncator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -27,75 +23,33 @@ public class PromQlQueryTools {
 
     private static final Logger log = LoggerFactory.getLogger(PromQlQueryTools.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-    private static final int MAX_METRIC_NAMES = 200;
     private static final String TRUNCATION_ADVICE = "Narrow your query — use an instant query "
             + "instead of a range, add a coarser step, a shorter time window, or a more specific "
             + "series filter.";
 
-    private final String baseUrl;
-    private final String authHeader;
-    private final String tenant;
-    private final HttpClient httpClient;
+    private final PromQlClient client;
+    private final CollectionPresenter presenter;
 
-    public PromQlQueryTools(String url, String token, String username, String password, String tenant) {
-        this.baseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-        this.tenant = tenant == null ? "" : tenant;
-        this.authHeader = authorizationHeader(token, username, password);
-        this.httpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
-        log.info("Metrics backend: url={}, auth={}", baseUrl,
-                authHeader == null ? "none" : authHeader.startsWith("Bearer") ? "bearer" : "basic");
-    }
-
-    private static String authorizationHeader(String token, String username, String password) {
-        if (token != null && !token.isBlank()) {
-            return "Bearer " + token;
-        }
-        if (username != null && !username.isBlank()) {
-            String credentials = username + ":" + (password == null ? "" : password);
-            return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
-        }
-        return null;
-    }
-
-    public boolean ping() {
-        String error = probe();
-        if (error != null) {
-            log.warn("Metrics health check failed: {}", error);
-        }
-        return error == null;
-    }
-
-    /** Lists label names, which every Prometheus-compatible server serves; returns the failure reason or null. */
-    public String probe() {
-        try {
-            JsonNode body = MAPPER.readTree(get("/api/v1/labels", ""));
-            return "success".equals(body.path("status").asText())
-                    ? null : "Unexpected answer from " + baseUrl + ": " + body.path("error").asText("no success status");
-        } catch (Exception e) {
-            return e.getMessage() == null || e.getMessage().isBlank()
-                    ? "Connection failed (" + e.getClass().getSimpleName() + ")" : e.getMessage();
-        }
+    public PromQlQueryTools(PromQlClient client, CollectionPresenter presenter) {
+        this.client = client;
+        this.presenter = presenter;
     }
 
     @LlmTool(name = "metrics", description = """
             Discover metric names. Returns the names matching a case-insensitive regular
-            expression (at most 200). Use the narrowest pattern that covers the question,
-            e.g. "kminion_kafka_consumer_group.*lag".
+            expression. Use the narrowest pattern that covers the question,
+            e.g. "kminion_kafka_consumer_group.*lag". More than 5 names come back as a snippet
+            with a collection key for the bulkOperation tool.
             Parameter match: regular expression to match metric names against; empty for all.
             """)
     public String metrics(String match) {
         return run("metrics", () -> {
-            JsonNode data = MAPPER.readTree(get("/api/v1/label/__name__/values", "")).path("data");
+            JsonNode data = MAPPER.readTree(client.get("/api/v1/label/__name__/values", "")).path("data");
             Pattern pattern = (match == null || match.isBlank())
                     ? null : Pattern.compile(match, Pattern.CASE_INSENSITIVE);
             List<String> names = new ArrayList<>();
-            int total = 0;
             for (JsonNode name : data) {
-                if (pattern == null || pattern.matcher(name.asText()).find()) {
-                    total++;
-                    if (names.size() < MAX_METRIC_NAMES) names.add(name.asText());
-                }
+                if (pattern == null || pattern.matcher(name.asText()).find()) names.add(name.asText());
             }
             if (names.isEmpty()) {
                 return pattern == null
@@ -104,25 +58,25 @@ public class PromQlQueryTools {
                           + "if even a broad pattern like 'kafka' finds nothing, the store holds no such "
                           + "series — report that as a finding.";
             }
-            String note = total > names.size()
-                    ? "\n(" + total + " metrics match; showing the first " + names.size() + " — use a narrower pattern.)"
-                    : "";
-            return String.join("\n", names) + note;
+            return presenter.block(pattern == null ? "Metric names" : "Metric names matching '" + match + "'", names);
         });
     }
 
     @LlmTool(name = "query", description = """
-            Run an instant PromQL query and return the result as the Prometheus API JSON.
+            Run an instant PromQL query. Returns the result type and the series found; more than
+            5 series come back as a snippet with a collection key for the bulkOperation tool.
             This is the default way to read a metric. For a trend over time use query_range.
             Parameter query: the PromQL expression.
             Parameter time: evaluation timestamp (RFC3339 or unix seconds); empty for now.
             """)
     public String query(String query, String time) {
-        return run("query", () -> post("/api/v1/query", form("query", query, "time", time)));
+        return run("query", () -> presentSeries(client.post("/api/v1/query", form("query", query, "time", time))));
     }
 
     @LlmTool(name = "query_range", description = """
-            Run a PromQL range query and return the result as the Prometheus API JSON.
+            Run a PromQL range query. Returns the result type and the series found, each with its
+            samples; more than 5 series come back as a snippet with a collection key for the
+            bulkOperation tool.
             Use only when a trend or history is explicitly requested.
             Parameter query: the PromQL expression.
             Parameter start: range start (RFC3339 or unix seconds).
@@ -130,25 +84,55 @@ public class PromQlQueryTools {
             Parameter step: resolution step, e.g. "30s", "10m".
             """)
     public String queryRange(String query, String start, String end, String step) {
-        return run("query_range", () -> post("/api/v1/query_range",
-                form("query", query, "start", start, "end", end, "step", step)));
+        return run("query_range", () -> presentSeries(client.post("/api/v1/query_range",
+                form("query", query, "start", start, "end", end, "step", step))));
     }
 
     @LlmTool(name = "labels", description = """
-            List label names.
+            List label names. More than 5 come back as a snippet with a collection key for the
+            bulkOperation tool.
             Parameter match: optional series selector restricting the labels returned; empty for all.
             """)
     public String labels(String match) {
-        return run("labels", () -> get("/api/v1/labels", matchParam(match)));
+        return run("labels", () -> presentValues(client.get("/api/v1/labels", matchParam(match)), "Label names"));
     }
 
     @LlmTool(name = "label_values", description = """
-            List the values of one label.
+            List the values of one label. More than 5 come back as a snippet with a collection key
+            for the bulkOperation tool.
             Parameter label: label name, e.g. "topic".
             Parameter match: optional series selector restricting the values returned; empty for all.
             """)
     public String labelValues(String label, String match) {
-        return run("label_values", () -> get("/api/v1/label/" + encode(label) + "/values", matchParam(match)));
+        return run("label_values", () -> presentValues(
+                client.get("/api/v1/label/" + encode(label) + "/values", matchParam(match)), "Values of label '" + label + "'"));
+    }
+
+    private String presentSeries(String responseBody) {
+        JsonNode data = parse(responseBody).path("data");
+        if (!data.path("result").isArray()) return responseBody;
+        return "resultType: " + data.path("resultType").asText() + "\n"
+                + presenter.block("Series", rows(data.path("result")));
+    }
+
+    private String presentValues(String responseBody, String title) {
+        JsonNode data = parse(responseBody).path("data");
+        if (!data.isArray()) return responseBody;
+        return presenter.block(title, rows(data));
+    }
+
+    private static JsonNode parse(String responseBody) {
+        try {
+            return MAPPER.readTree(responseBody);
+        } catch (Exception e) {
+            return MissingNode.getInstance();
+        }
+    }
+
+    private static List<String> rows(JsonNode array) {
+        List<String> rows = new ArrayList<>();
+        array.forEach(element -> rows.add(element.isTextual() ? element.asText() : element.toString()));
+        return rows;
     }
 
     private interface Call {
@@ -182,37 +166,5 @@ public class PromQlQueryTools {
             body.append(keyValuePairs[i]).append('=').append(encode(value));
         }
         return body.toString();
-    }
-
-    private HttpRequest.Builder request(String path) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
-                .timeout(TIMEOUT)
-                .header("Accept", "application/json");
-        if (authHeader != null) builder.header("Authorization", authHeader);
-        if (!tenant.isBlank()) builder.header("X-Scope-OrgID", tenant);
-        return builder;
-    }
-
-    private String get(String path, String queryString) throws Exception {
-        String target = queryString.isEmpty() ? path : path + "?" + queryString;
-        return send(request(target).GET().build());
-    }
-
-    private String post(String path, String formBody) throws Exception {
-        return send(request(path)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                .build());
-    }
-
-    private String send(HttpRequest request) throws Exception {
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() / 100 != 2) {
-            String body = response.body() == null ? "" : response.body();
-            throw new IllegalStateException("HTTP " + response.statusCode() + " from "
-                    + request.uri().getPath() + ": " + body.substring(0, Math.min(body.length(), 500)));
-        }
-        return response.body();
     }
 }

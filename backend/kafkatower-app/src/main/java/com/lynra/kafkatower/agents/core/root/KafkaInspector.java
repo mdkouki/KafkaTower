@@ -20,6 +20,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @ConditionalOnAssistantEnabled
 @Agent(description = "Root Kafka assistant orchestrator. Analyzes every question to decide, " +
@@ -65,8 +66,13 @@ public class KafkaInspector {
         String specialistTools = String.join(", ", subAgentTools.specialistToolNames());
         orchestrationPrompt = SkillLoader.loadContent("/skills/ROOT_ORCHESTRATOR.md")
                 .replace("{{SPECIALIST_TOOLS}}", specialistTools)
+                .replace("{{CLUSTERS}}", clusterList())
                 + "\n\n" + SkillLoader.loadContent("/skills/shared/UNTRUSTED_TOOL_OUTPUT.md");
         completenessCheckPrompt = SkillLoader.loadContent("/skills/ROOT_COMPLETENESS_CHECK.md");
+    }
+
+    private String clusterList() {
+        return subAgentTools.clusterNames().stream().map(name -> "`" + name + "`").collect(Collectors.joining(", "));
     }
 
     @AchievesGoal(description = "User question answered by the appropriate specialist or by collaboration between the list of specialists, with the draft reviewed for completeness before it is returned")

@@ -1,142 +1,64 @@
-# Kafka Metrics Catalog — KMinion
+# Catalog — KMinion (`kminion_*`)
 
-All metric names confirmed available in this metrics environment. `kminion_*` entries
-are live-verified. (Cluster-label and no-guessing-names rules are in your system prompt, not
-repeated per category here.)
+Live-verified names. Cluster-label and no-guessing rules are in your system prompt.
 
----
-
-## KMinion — Exporter Health
-
-| Metric | Key labels | Description |
+## Exporter
+| Metric | Labels | Meaning |
 |---|---|---|
-| `kminion_exporter_up` | `cluster` | 1 if KMinion is running and connected to Kafka |
-| `kminion_exporter_offset_consumer_records_consumed_total` | `cluster` | Internal offset consumer records (counter) |
+| `kminion_exporter_up` | `cluster` | 1 = KMinion running and connected to Kafka |
+| `kminion_exporter_offset_consumer_records_consumed_total` | `cluster` | internal offset consumer records (counter) |
 | `kminion_log_messages_total` | `cluster` | KMinion log messages by level |
 
----
-
-## KMinion — Cluster
-
-| Metric | Key labels | Description |
+## Cluster, broker
+| Metric | Labels | Meaning |
 |---|---|---|
-| `kminion_kafka_cluster_info` | `cluster`, `cluster_id`, `broker_count` | Cluster metadata gauge |
+| `kminion_kafka_cluster_info` | `cluster`, `cluster_id`, `broker_count` | cluster metadata gauge |
+| `kminion_kafka_broker_info` | `cluster`, `broker_id`, `address`, `rack_id` | broker metadata gauge |
+| `kminion_kafka_broker_log_dir_size_total_bytes` | `cluster`, `broker_id` | log dir size on broker |
 
----
-
-## KMinion — Broker
-
-| Metric | Key labels | Description |
+## Topic
+| Metric | Labels | Meaning |
 |---|---|---|
-| `kminion_kafka_broker_info` | `cluster`, `broker_id`, `address`, `rack_id` | Broker metadata gauge |
-| `kminion_kafka_broker_log_dir_size_total_bytes` | `cluster`, `broker_id` | Total log directory size on this broker |
+| `kminion_kafka_topic_info` | `cluster`, `topic`, `partition_count`, `replication_factor` | topic metadata gauge |
+| `kminion_kafka_topic_log_dir_size_total_bytes` | `cluster`, `topic` | topic log size |
+| `kminion_kafka_topic_high_water_mark_sum` | `cluster`, `topic` | sum of HWM over partitions |
+| `kminion_kafka_topic_low_water_mark_sum` | `cluster`, `topic` | sum of low watermarks over partitions |
+| `kminion_kafka_topic_partition_high_water_mark` | `cluster`, `topic`, `partition_id` | per-partition HWM |
+| `kminion_kafka_topic_partition_low_water_mark` | `cluster`, `topic`, `partition_id` | per-partition low watermark |
 
----
-
-## KMinion — Topic
-
-| Metric | Key labels | Description |
+## Consumer group
+`partition_id` is a **string** label: `partition_id="0"`. Lag metrics are gauges.
+| Metric | Labels | Meaning |
 |---|---|---|
-| `kminion_kafka_topic_info` | `cluster`, `topic`, `partition_count`, `replication_factor` | Topic metadata gauge |
-| `kminion_kafka_topic_log_dir_size_total_bytes` | `cluster`, `topic` | Total log size for this topic |
-| `kminion_kafka_topic_high_water_mark_sum` | `cluster`, `topic` | Sum of high water marks across all partitions |
-| `kminion_kafka_topic_low_water_mark_sum` | `cluster`, `topic` | Sum of low water marks across all partitions |
-| `kminion_kafka_topic_partition_high_water_mark` | `cluster`, `topic`, `partition_id` | Per-partition high water mark |
-| `kminion_kafka_topic_partition_low_water_mark` | `cluster`, `topic`, `partition_id` | Per-partition low water mark |
+| `kminion_kafka_consumer_group_info` | `cluster`, `group_id`, `protocol_type`, `state` | group metadata + state |
+| `kminion_kafka_consumer_group_members` | `cluster`, `group_id` | active members |
+| `kminion_kafka_consumer_group_empty_members` | `cluster`, `group_id` | members with no assignment |
+| `kminion_kafka_consumer_group_offset_commits_total` | `cluster`, `group_id`, `topic` | offset commits (counter) |
+| `kminion_kafka_consumer_group_topic_assigned_partitions` | `cluster`, `group_id`, `topic` | partitions assigned on topic |
+| `kminion_kafka_consumer_group_topic_members` | `cluster`, `group_id`, `topic` | members consuming topic |
+| `kminion_kafka_consumer_group_topic_offset_sum` | `cluster`, `group_id`, `topic` | sum of committed offsets |
+| `kminion_kafka_consumer_group_topic_lag` | `cluster`, `group_id`, `topic` | total lag (LEO − committed), group × topic |
+| `kminion_kafka_consumer_group_topic_partition_lag` | `cluster`, `group_id`, `topic`, `partition_id` | lag of one partition |
 
----
+`state` values: `Stable`, `Empty`, `PreparingRebalance`, `CompletingRebalance`, `Dead`.
 
-## KMinion — Consumer Group (group level)
-
-| Metric | Key labels | Description |
+## Traffic
+| Metric | Labels | Meaning |
 |---|---|---|
-| `kminion_kafka_consumer_group_info` | `cluster`, `group_id`, `protocol_type`, `state` | Group metadata and current state |
-| `kminion_kafka_consumer_group_members` | `cluster`, `group_id` | Total active member count |
-| `kminion_kafka_consumer_group_empty_members` | `cluster`, `group_id` | Members with no partition assignments |
+| `kminion_kafka_received_bytes` | `cluster`, `broker_id` | bytes received by broker |
+| `kminion_kafka_sent_bytes` | `cluster`, `broker_id` | bytes sent by broker |
+| `kminion_kafka_requests_received_total` | `cluster`, `broker_id` | requests received (counter) |
+| `kminion_kafka_requests_sent_total` | `cluster`, `broker_id` | requests sent (counter) |
 
----
-
-## KMinion — Consumer Group (topic level)
-
-| Metric | Key labels | Description |
-|---|---|---|
-| `kminion_kafka_consumer_group_offset_commits_total` | `cluster`, `group_id`, `topic` | Total offset commits (counter) |
-| `kminion_kafka_consumer_group_topic_assigned_partitions` | `cluster`, `group_id`, `topic` | Partitions assigned to this group on this topic |
-| `kminion_kafka_consumer_group_topic_members` | `cluster`, `group_id`, `topic` | Members consuming from this topic |
-| `kminion_kafka_consumer_group_topic_offset_sum` | `cluster`, `group_id`, `topic` | Sum of committed offsets |
-| `kminion_kafka_consumer_group_topic_lag` | `cluster`, `group_id`, `topic` | Total lag (LEO − committed) for this group × topic |
-
----
-
-## KMinion — Consumer Group (partition level)
-
-| Metric | Key labels | Description |
-|---|---|---|
-| `kminion_kafka_consumer_group_topic_partition_lag` | `cluster`, `group_id`, `topic`, `partition_id` | Lag for one partition. `partition_id` is a **string** label — filter as `partition_id="0"` |
-
----
-
-## KMinion — Traffic / I/O
-
-| Metric | Key labels | Description |
-|---|---|---|
-| `kminion_kafka_received_bytes` | `cluster`, `broker_id` | Bytes received by broker |
-| `kminion_kafka_sent_bytes` | `cluster`, `broker_id` | Bytes sent by broker |
-| `kminion_kafka_requests_received_total` | `cluster`, `broker_id` | Requests received (counter) |
-| `kminion_kafka_requests_sent_total` | `cluster`, `broker_id` | Requests sent (counter) |
-
----
-
-## KMinion Consumer Group Metrics — Quick Reference
-
-All consumer group metrics use the `kminion_kafka_consumer_group_*` prefix.
-
-| Metric | Granularity | Key labels |
-|---|---|---|
-| `kminion_kafka_consumer_group_info` | group | `group_id`, `state` |
-| `kminion_kafka_consumer_group_members` | group | `group_id` |
-| `kminion_kafka_consumer_group_empty_members` | group | `group_id` |
-| `kminion_kafka_consumer_group_offset_commits_total` | group × topic | `group_id`, `topic` |
-| `kminion_kafka_consumer_group_topic_assigned_partitions` | group × topic | `group_id`, `topic` |
-| `kminion_kafka_consumer_group_topic_members` | group × topic | `group_id`, `topic` |
-| `kminion_kafka_consumer_group_topic_offset_sum` | group × topic | `group_id`, `topic` |
-| `kminion_kafka_consumer_group_topic_lag` | group × topic | `group_id`, `topic` |
-| `kminion_kafka_consumer_group_topic_partition_lag` | per partition | `group_id`, `topic`, `partition_id` (string) |
-
-**State label values in `kminion_kafka_consumer_group_info`**:
-`Stable`, `Empty`, `PreparingRebalance`, `CompletingRebalance`, `Dead`
-
-### Ready-to-use patterns
-
+## Ready patterns
 ```promql
-# Total lag — single group (sum across topics)
-sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>", group_id="<id>"}) by (group_id)
-
-# Per-topic lag breakdown
-kminion_kafka_consumer_group_topic_lag{cluster="<name>", group_id="<id>"}
-
-# Worst partitions
-sort_desc(kminion_kafka_consumer_group_topic_partition_lag{cluster="<name>", group_id="<id>"})
-
-# Top 10 lagging groups cluster-wide
-topk(10, sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>"}) by (group_id))
-
-# Is lag growing? (positive slope = falling behind; gauge — use deriv()/delta() over a
-# subquery, not rate())
-deriv(sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>", group_id="<id>"})[15m:1m])
-
-# Groups currently rebalancing
-kminion_kafka_consumer_group_info{cluster="<name>", state=~"PreparingRebalance|CompletingRebalance"}
-
-# Empty groups (no active members)
-kminion_kafka_consumer_group_info{cluster="<name>", state="Empty"}
-
-# Groups with zero members
-kminion_kafka_consumer_group_members{cluster="<name>"} == 0
-
-# Top lagging groups on a specific topic
-topk(5, kminion_kafka_consumer_group_topic_lag{cluster="<name>", topic="<name>"})
-
-# Committed offset advancing? (flat = consumer stopped)
-rate(kminion_kafka_consumer_group_topic_offset_sum{cluster="<name>", group_id="<id>"}[5m])
+sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>", group_id="<id>"}) by (group_id)        # total lag, one group
+topk(10, sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>"}) by (group_id))               # top lagging groups
+topk(5, kminion_kafka_consumer_group_topic_lag{cluster="<name>", topic="<name>"})                   # top lagging on topic
+sort_desc(kminion_kafka_consumer_group_topic_partition_lag{cluster="<name>", group_id="<id>"})      # worst partitions
+deriv(sum(kminion_kafka_consumer_group_topic_lag{cluster="<name>", group_id="<id>"})[15m:1m])       # growing? >0 = falling behind. Gauge: deriv/delta over subquery, not rate()
+kminion_kafka_consumer_group_info{cluster="<name>", state=~"PreparingRebalance|CompletingRebalance"}   # rebalancing
+kminion_kafka_consumer_group_info{cluster="<name>", state="Empty"}                                  # empty groups
+kminion_kafka_consumer_group_members{cluster="<name>"} == 0                                         # zero members
+rate(kminion_kafka_consumer_group_topic_offset_sum{cluster="<name>", group_id="<id>"}[5m])          # offsets advancing? flat = consumer stopped
 ```

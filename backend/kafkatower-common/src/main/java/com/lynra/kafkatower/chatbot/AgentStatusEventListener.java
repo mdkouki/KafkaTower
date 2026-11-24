@@ -3,6 +3,8 @@ package com.lynra.kafkatower.chatbot;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.event.AgentProcessCreationEvent;
 import com.embabel.agent.api.event.AgentProcessEvent;
+import com.embabel.agent.api.event.AgentProcessFinishedEvent;
+import com.embabel.agent.api.event.AgentProcessStuckEvent;
 import com.embabel.agent.api.event.AgenticEventListener;
 import org.springframework.stereotype.Component;
 
@@ -22,48 +24,41 @@ public class AgentStatusEventListener implements AgenticEventListener {
 
     // Inheritable on purpose: with Embabel's PARALLEL tool loop (see application.yml) a specialist
     // sub-process is created on a virtual thread spawned from the request thread; a plain
-    // ThreadLocal would be empty there. The sink (FluxSink via Flux.create) is thread-safe.
-    private static final ThreadLocal<Consumer<String>> SINK = new InheritableThreadLocal<>();
-    private static final ThreadLocal<Boolean> ROOT_SEEN = new InheritableThreadLocal<>() {
-        @Override
-        protected Boolean initialValue() {
-            return false;
-        }
-    };
+    // ThreadLocal would be empty there. The tracker is thread-safe and closed by clear(), so a
+    // pooled thread that inherited it by accident can no longer push into a finished request.
+    private static final ThreadLocal<ChatStatusTracker> TRACKER = new InheritableThreadLocal<>();
 
     public static void register(Consumer<String> statusSink) {
-        SINK.set(statusSink);
-        ROOT_SEEN.set(false);
+        TRACKER.set(new ChatStatusTracker(statusSink));
     }
 
     public static void emit(String label) {
-        Consumer<String> sink = SINK.get();
-        if (sink != null) {
-            sink.accept(STATUS_PREFIX + label);
+        ChatStatusTracker tracker = TRACKER.get();
+        if (tracker != null) {
+            tracker.phaseStarted(label);
         }
     }
 
     public static void clear() {
-        SINK.remove();
-        ROOT_SEEN.remove();
+        ChatStatusTracker tracker = TRACKER.get();
+        if (tracker != null) {
+            tracker.close();
+        }
+        TRACKER.remove();
     }
 
     @Override
     public void onProcessEvent(AgentProcessEvent event) {
-        if (!(event instanceof AgentProcessCreationEvent creation)) {
+        ChatStatusTracker tracker = TRACKER.get();
+        if (tracker == null) {
             return;
         }
-        Consumer<String> sink = SINK.get();
-        if (sink == null) {
-            return;
+        if (event instanceof AgentProcessCreationEvent creation) {
+            tracker.processCreated(creation.getProcessId(),
+                    () -> toStatusLabel(creation.getAgentProcess().getAgent().getName()));
+        } else if (event instanceof AgentProcessFinishedEvent || event instanceof AgentProcessStuckEvent) {
+            tracker.processEnded(event.getProcessId());
         }
-        if (!ROOT_SEEN.get()) {
-            // The first creation event on this thread is the root process, which gets no label.
-            ROOT_SEEN.set(true);
-            return;
-        }
-        String agentName = creation.getAgentProcess().getAgent().getName();
-        sink.accept(STATUS_PREFIX + toStatusLabel(agentName));
     }
 
     private static String toStatusLabel(String agentName) {

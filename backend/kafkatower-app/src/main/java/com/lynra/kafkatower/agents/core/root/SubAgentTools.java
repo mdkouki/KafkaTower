@@ -29,7 +29,10 @@ import java.util.stream.Collectors;
 public class SubAgentTools {
 
     private static final String QUESTION_GUIDANCE = """
-            Parameter question: a fully self-contained question. Findings from any specialist already \
+            Parameter question: a fully self-contained question. This is the ONLY parameter — there is \
+            no separate cluster argument, so write the exact cluster name inside the question text \
+            (e.g. "In cluster kafka-nonprod: list topics containing fulfillment"); a specialist given \
+            a question without it has no way to know which cluster is meant. Findings from any specialist already \
             called this conversation are automatically prepended for you — no need to paste them in \
             yourself. If those findings and this specialist's own result genuinely disagree, it is \
             expected to flag the disagreement, not silently pick one.""";
@@ -137,6 +140,10 @@ public class SubAgentTools {
 
     public List<Specialist<?, ?>> specialists() {
         return specialists;
+    }
+
+    public List<String> clusterNames() {
+        return kafkaAdminMap.keySet().stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
     }
 
     public SortedSet<String> specialistToolNames() {

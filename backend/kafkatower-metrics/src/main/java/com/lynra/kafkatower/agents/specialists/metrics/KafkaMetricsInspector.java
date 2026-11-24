@@ -11,6 +11,9 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
+import com.lynra.kafkatower.collections.FullListEnforcer;
+import com.lynra.kafkatower.collections.UnreadCollectionTracker;
+import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.MetricsSkillTools;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
@@ -29,15 +32,18 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     private static final Logger log = LoggerFactory.getLogger(KafkaMetricsInspector.class);
 
     private final MetricsSkillTools metricsSkillTools;
+    private final BulkCollectionTools bulkCollectionTools;
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
     private String basePrompt;
     private volatile String sharedGuidance;
 
     public KafkaMetricsInspector(MetricsSkillTools metricsSkillTools,
+                                  BulkCollectionTools bulkCollectionTools,
                                   MetricsBackend metricsBackend,
                                   @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.metricsSkillTools = metricsSkillTools;
+        this.bulkCollectionTools = bulkCollectionTools;
         this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
@@ -85,14 +91,16 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         // tool. This specialist's own token stream is suppressed by the caller anyway
         // (SubAgentTools.run), so streaming bought nothing here — createObject uses the
         // ordinary tool loop where Unfolding actually works.
+        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "metrics answer", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
+                FullListEnforcer.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt())
                         .withTool(metricsTools)
                         .withToolObject(metricsSkillTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
+                        .withToolObject(bulkCollectionTools)
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
+                        question.text(), unreadCollections));
         return new MetricsAnswer(response);
     }
 
