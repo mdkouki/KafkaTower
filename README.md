@@ -6,8 +6,7 @@
 
 See who can touch what, which topics are alive and whether your consumers keep up. Or just ask: a team of specialist agents queries live cluster state, historical metrics and logs, then cross-checks its own answer before replying.
 
-![KafkaTower assistant answering "who is using the topic orders.events"](docs/screenshots/06-assistant-orders-events.png)
-
+![img.png](img.png)
 </div>
 
 ---
