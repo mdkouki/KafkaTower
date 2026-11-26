@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
  * LLM never opened with {@code bulkOperation}, the LLM is asked again, naming those keys, until it
  * has read them or the follow-up limit is reached.
  */
-public final class FullListEnforcer {
+final class FullListEnforcer {
 
     static final int MAX_FOLLOW_UPS = 2;
 
@@ -22,7 +22,7 @@ public final class FullListEnforcer {
     }
 
     /** {@code runner} must have {@code tracker} registered as a tool-call inspector. */
-    public static String answer(PromptRunner runner, String question, UnreadCollectionTracker tracker) {
+    static String answer(PromptRunner runner, String question, UnreadCollectionTracker tracker) {
         String answer = runner.createObject(question, String.class);
         for (int followUp = 1; followUp <= MAX_FOLLOW_UPS; followUp++) {
             List<UnreadCollectionTracker.UnreadCollection> unread = tracker.takeUnread();

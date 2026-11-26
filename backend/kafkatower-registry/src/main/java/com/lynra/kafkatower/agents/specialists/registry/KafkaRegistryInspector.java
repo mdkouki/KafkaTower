@@ -9,12 +9,10 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
-import com.lynra.kafkatower.collections.FullListEnforcer;
-import com.lynra.kafkatower.collections.UnreadCollectionTracker;
-import com.lynra.kafkatower.tools.BulkCollectionTools;
+import com.lynra.kafkatower.collections.LargeResultGuard;
 import com.lynra.kafkatower.tools.RegistryQueryTools;
-import com.lynra.kafkatower.utils.SkillLoader;
-import jakarta.annotation.PostConstruct;
+import com.lynra.kafkatower.utils.AgentSkills;
+import com.lynra.kafkatower.utils.CachedTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,24 +33,25 @@ import org.springframework.beans.factory.annotation.Value;
 public class KafkaRegistryInspector implements Specialist<RegistryQuestion, RegistryAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaRegistryInspector.class);
+    static final String SKILL = "kafka-registry-inspector";
 
     private final RegistryQueryTools queryTools;
-    private final BulkCollectionTools bulkCollectionTools;
+    private final CachedTools cachedTools;
+    private final LargeResultGuard largeResultGuard;
+    private final AgentSkills agentSkills;
     private final long slowCallThresholdMs;
-    private String basePrompt;
     private volatile String sharedGuidance;
 
     public KafkaRegistryInspector(RegistryQueryTools queryTools,
-                                  BulkCollectionTools bulkCollectionTools,
+                                  CachedTools cachedTools,
+                                  LargeResultGuard largeResultGuard,
+                                  AgentSkills agentSkills,
                                   @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.queryTools = queryTools;
-        this.bulkCollectionTools = bulkCollectionTools;
+        this.cachedTools = cachedTools;
+        this.largeResultGuard = largeResultGuard;
+        this.agentSkills = agentSkills;
         this.slowCallThresholdMs = slowCallThresholdMs;
-    }
-
-    @PostConstruct
-    void loadSkill() {
-        basePrompt = SkillLoader.loadContent("/skills/KAFKA_REGISTRY_INSPECTOR.md");
     }
 
     @Override
@@ -61,8 +60,7 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
     }
 
     private String systemPrompt() {
-        String guidance = sharedGuidance;
-        return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
+        return agentSkills.systemPrompt(SKILL, sharedGuidance);
     }
 
     @AchievesGoal(description = "Registry dependency/usage question answered")
@@ -74,15 +72,13 @@ public class KafkaRegistryInspector implements Specialist<RegistryQuestion, Regi
     public RegistryAnswer answer(RegistryQuestion question, Ai ai) {
         log.info("Registry inspection request: \"{}\"", question.text());
         // Non-streaming on purpose, same reasoning as KafkaLogInspector.searchLogs.
-        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "registry answer", slowCallThresholdMs, () ->
-                FullListEnforcer.answer(ai.withAutoLlm()
+                largeResultGuard.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt())
-                        .withToolObject(queryTools)
-                        .withToolObject(bulkCollectionTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withTools(cachedTools.from(queryTools))
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
-                        question.text(), unreadCollections));
+                        question.text()));
         return new RegistryAnswer(response);
     }
 

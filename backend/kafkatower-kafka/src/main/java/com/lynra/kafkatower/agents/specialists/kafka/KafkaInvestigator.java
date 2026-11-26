@@ -1,7 +1,6 @@
 package com.lynra.kafkatower.agents.specialists.kafka;
 
-import com.lynra.kafkatower.collections.FullListEnforcer;
-import com.lynra.kafkatower.collections.UnreadCollectionTracker;
+import com.lynra.kafkatower.collections.LargeResultGuard;
 import com.lynra.kafkatower.config.ConditionalOnAssistantEnabled;
 import com.embabel.agent.api.annotation.Action;
 import com.embabel.agent.api.annotation.AchievesGoal;
@@ -14,14 +13,16 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
-import com.lynra.kafkatower.tools.BulkCollectionTools;
 import com.lynra.kafkatower.tools.KafkaAdminClientTools;
-import com.lynra.kafkatower.tools.MetricsSkillTools;
-import com.lynra.kafkatower.utils.SkillLoader;
-import jakarta.annotation.PostConstruct;
+import com.lynra.kafkatower.tools.MetricsSkills;
+import com.lynra.kafkatower.utils.AgentSkills;
+import com.lynra.kafkatower.utils.CachedTools;
+import com.lynra.kafkatower.utils.ToolCallTextDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+
+import java.util.function.UnaryOperator;
 
 @ConditionalOnAssistantEnabled
 @Agent(description = "Handles live Kafka state investigation and active troubleshooting: " +
@@ -37,39 +38,37 @@ import org.springframework.beans.factory.annotation.Value;
 public class KafkaInvestigator implements Specialist<InvestigationQuestion, InvestigationAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaInvestigator.class);
+    static final String INVESTIGATOR_SKILL = "kafka-investigator";
+    static final String ADMIN_REFERENCE_SKILL = "kafka-admin-reference";
+    static final String REPORT_SKILL = "kafka-investigation-report";
+    private static final String TOOL_CALL_RETRY_INSTRUCTION = """
+
+
+            Your previous reply was a tool call written out as text. No tool exists in this step and
+            nothing will run it. Reply with the finished Kafka Investigation Report in plain markdown
+            only: no JSON, no tool calls, no tool names as instructions.
+            """;
 
     private final KafkaAdminClientTools kafkaAdminClientTools;
-    private final MetricsSkillTools metricsSkillTools;
-    private final BulkCollectionTools bulkCollectionTools;
+    private final AgentSkills agentSkills;
+    private final CachedTools cachedTools;
+    private final LargeResultGuard largeResultGuard;
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
-    private String basePrompt;
-    private String adminReference;
     private volatile String sharedGuidance;
 
     public KafkaInvestigator(KafkaAdminClientTools kafkaAdminClientTools,
-                             MetricsSkillTools metricsSkillTools,
-                             BulkCollectionTools bulkCollectionTools,
+                             AgentSkills agentSkills,
+                             CachedTools cachedTools,
+                             LargeResultGuard largeResultGuard,
                              MetricsBackend metricsBackend,
                              @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.kafkaAdminClientTools = kafkaAdminClientTools;
-        this.metricsSkillTools = metricsSkillTools;
-        this.bulkCollectionTools = bulkCollectionTools;
+        this.agentSkills = agentSkills;
+        this.cachedTools = cachedTools;
+        this.largeResultGuard = largeResultGuard;
         this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
-    }
-
-    @PostConstruct
-    void loadSkill() {
-        // Only the always-relevant material is loaded at startup: main skill (routes to the
-        // right playbook scope) + admin commands (always available since this agent always has
-        // AdminClient tools). The investigation playbooks and metrics catalog — ~10K tokens
-        // combined, the bulk of what used to be concatenated here unconditionally — are now
-        // fetched on demand via MetricsSkillTools, scoped to what the question actually needs.
-        // Cross-specialist shared guidance (tool-output handling, query strategy, reply format)
-        // is NOT loaded here — see applySharedGuidance below.
-        basePrompt = SkillLoader.loadContent("/skills/kafka-investigation/KAFKA_INVESTIGATOR.md");
-        adminReference = SkillLoader.loadContent("/skills/kafka-investigation/references/kafka-admin-commands.md");
     }
 
     @Override
@@ -78,15 +77,16 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     }
 
     private String systemPrompt() {
-        String guidance = sharedGuidance;
-        return basePrompt
-                + (guidance == null ? "" : "\n\n" + guidance)
-                + "\n\n## Kafka Admin Commands Reference\n\n" + adminReference;
+        return agentSkills.systemPrompt(INVESTIGATOR_SKILL, sharedGuidance);
+    }
+
+    private String synthesisSystemPrompt() {
+        return agentSkills.systemPrompt(REPORT_SKILL, sharedGuidance);
     }
 
     /**
      * The planner can't schedule {@link #correlateMetrics} before this produces an
-     * {@link AdminSnapshot}, making "Admin First, Metrics Second" (KAFKA_INVESTIGATOR.md) a
+     * {@link AdminSnapshot}, making "Admin First, Metrics Second" (kafka-investigator skill) a
      * structural guarantee rather than a prose rule.
      */
     @Action(description = """
@@ -97,7 +97,8 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
     public AdminSnapshot gatherAdminState(InvestigationQuestion question, Ai ai) {
         String prompt = systemPrompt() + "\n\n" + """
                 You are running the FIRST step of a two-step investigation: gather current
-                ground truth using ONLY the Kafka Admin Client tools below. Do not speculate
+                ground truth using ONLY the Kafka Admin Client tools below (and the skill tools that
+                read reference material). Do not speculate
                 about metrics or historical trends here — that happens in the next step.
                 Produce a faithful, complete summary of every relevant admin finding (do not
                 omit findings for brevity) — this summary is the ONLY record the next step will
@@ -108,15 +109,14 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 `%1$s no` if the admin findings fully answer it (current state, counts, lists,
                 configs, ACLs, quotas).
                 """.formatted(AdminSnapshot.VERDICT_LABEL);
-        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "investigation admin state", slowCallThresholdMs, () ->
-                FullListEnforcer.answer(ai.withAutoLlm()
+                largeResultGuard.answer(ai.withAutoLlm()
                         .withSystemPrompt(prompt)
-                        .withToolObject(kafkaAdminClientTools)
-                        .withToolObject(bulkCollectionTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withReference(agentSkills.reference(MetricsSkills.INVESTIGATION_PLAYBOOKS, ADMIN_REFERENCE_SKILL))
+                        .withTools(cachedTools.from(kafkaAdminClientTools))
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
-                        question.text(), unreadCollections));
+                        question.text()));
         return AdminSnapshot.fromResponse(response);
     }
 
@@ -124,7 +124,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
      * Re-includes {@code kafkaAdminClientTools} alongside the metrics tools so the Entity-Scale
      * Discipline narrowing pattern (metrics {@code topk} to find the worst-N, then
      * {@code describeConsumerGroup}/{@code listConsumerGroupOffsets} on just those — see
-     * KAFKA_INVESTIGATOR.md) fits in one action instead of needing a separate re-entry action.
+     * the kafka-investigator skill) fits in one action instead of needing a separate re-entry action.
      */
     @Action(description = """
             Correlate the AdminSnapshot findings against metric trends: rates, growth,
@@ -147,7 +147,7 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 %s
 
                 Your job now: decide what historical/metric context is actually needed given the
-                admin findings above, confirm metric names via getMetricsCatalog before querying,
+                admin findings above, confirm metric names in the kafka-metrics-catalog skill before querying,
                 and query only what answers the questions the admin findings raised. You may call
                 AdminClient tools again ONLY to narrow into specific entities metrics surface
                 (e.g. topk lag → describeConsumerGroup on just those groups) — do not redo the
@@ -159,12 +159,11 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
         // call path never re-evaluates ToolInjectionStrategy between rounds, so UnfoldingTool's
         // facade-then-real-tools swap can't work over it. This specialist's own token stream is
         // suppressed by the caller anyway (SubAgentTools.run), so streaming bought nothing here.
-        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "investigation metrics correlation", slowCallThresholdMs, () ->
-                FullListEnforcer.answer(runner
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                largeResultGuard.answer(runner
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
-                        question.text(), unreadCollections));
+                        question.text()));
         return new MetricsCorrelation(response);
     }
 
@@ -176,9 +175,9 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                         + "to correlate against the admin snapshot above.");
         return ai.withAutoLlm()
                 .withSystemPrompt(base)
-                .withToolObject(kafkaAdminClientTools)
-                .withToolObject(bulkCollectionTools)
-                .withToolObject(metricsSkillTools)
+                .withReference(agentSkills.reference(MetricsSkills.INVESTIGATION_PLAYBOOKS, MetricsSkills.CATALOG,
+                        ADMIN_REFERENCE_SKILL))
+                .withTools(cachedTools.from(kafkaAdminClientTools))
                 .withTool(metricsTools);
     }
 
@@ -189,11 +188,11 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
             """)
     public InvestigationAnswer synthesizeInvestigation(InvestigationQuestion question, AdminSnapshot adminSnapshot,
                                                          MetricsCorrelation metricsCorrelation, Ai ai) {
-        String prompt = systemPrompt() + "\n\n" + """
+        String prompt = synthesisSystemPrompt() + "\n\n" + """
                 You are running the THIRD and FINAL step. You have no tools in this step: do not call or
                 describe any tool. Write the Kafka Investigation Report
                 using only the evidence below — do not invent findings not present in either
-                section. Follow the Output Format in the skill above exactly.
+                section. Follow the Output Format in the instructions above exactly.
 
                 ## Admin Snapshot
                 %s
@@ -201,13 +200,49 @@ public class KafkaInvestigator implements Specialist<InvestigationQuestion, Inve
                 ## Metrics Correlation
                 %s
                 """.formatted(adminSnapshot.summary(), metricsCorrelation.summary());
-        String response = LlmCallTimer.timed(log, "investigation synthesis", slowCallThresholdMs, () ->
-                ai.withAutoLlm()
-                        .withSystemPrompt(prompt)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
-                        .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
-                        .createObject(question.text(), String.class));
+        String response = synthesizeValidated(prompt, adminSnapshot, metricsCorrelation, promptText ->
+                LlmCallTimer.timed(log, "investigation synthesis", slowCallThresholdMs, () ->
+                        ai.withAutoLlm()
+                                .withSystemPrompt(promptText)
+                                .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
+                                .withGuardRails(NoSecretLeakageGuardRail.INSTANCE)
+                                .createObject(question.text(), String.class)));
         return new InvestigationAnswer(response);
+    }
+
+    /**
+     * A tool-less step that answers with a tool call written out as text is retried once with the
+     * mistake named; if it repeats, the gathered findings are returned unedited. A tool call must
+     * never travel upstream as the specialist's answer: the orchestrator then writes one from
+     * nothing.
+     */
+    String synthesizeValidated(String prompt, AdminSnapshot adminSnapshot, MetricsCorrelation metricsCorrelation,
+                               UnaryOperator<String> llm) {
+        String response = llm.apply(prompt);
+        if (!ToolCallTextDetector.containsToolCall(response)) {
+            return response;
+        }
+        log.warn("Investigation synthesis answered with a tool call instead of a report; retrying once");
+        response = llm.apply(prompt + TOOL_CALL_RETRY_INSTRUCTION);
+        if (!ToolCallTextDetector.containsToolCall(response)) {
+            return response;
+        }
+        log.warn("Investigation synthesis answered with a tool call again; returning the gathered findings unedited");
+        return findingsReport(adminSnapshot, metricsCorrelation);
+    }
+
+    private static String findingsReport(AdminSnapshot adminSnapshot, MetricsCorrelation metricsCorrelation) {
+        return """
+                ## Kafka Investigation Report
+
+                The final write-up could not be produced, so these are the findings the investigation gathered, unedited.
+
+                ### Admin findings
+                %s
+
+                ### Metrics correlation
+                %s
+                """.formatted(adminSnapshot.summary(), metricsCorrelation.summary());
     }
 
     @Override

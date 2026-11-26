@@ -16,7 +16,9 @@ import java.util.List;
 import java.util.Map;
 
 /*
- * Lists /models; endpoints that do not offer it get a minimal chat completion instead.
+ * Lists /models; an endpoint that does not offer it (or answers it with anything but a model list,
+ * as LM Studio does for an unknown path such as a base URL missing /v1) gets a minimal chat
+ * completion instead, which must come back as a real completion.
  */
 @Component
 public class LlmConnectionVerifier {
@@ -36,7 +38,7 @@ public class LlmConnectionVerifier {
             if (status == 401 || status == 403) {
                 throw new IllegalArgumentException("The endpoint rejected the API key (HTTP " + status + ").");
             }
-            if (status / 100 == 2) {
+            if (status / 100 == 2 && hasJsonArray(models.body(), "data")) {
                 requireModelServed(models.body(), model);
                 return;
             }
@@ -71,6 +73,19 @@ public class LlmConnectionVerifier {
         if (response.statusCode() / 100 != 2) {
             throw new IllegalArgumentException("The endpoint refused a test request for model '" + model
                     + "' (HTTP " + response.statusCode() + "): " + abbreviate(response.body()));
+        }
+        if (!hasJsonArray(response.body(), "choices")) {
+            throw new IllegalArgumentException("The endpoint answered the test request for model '" + model
+                    + "' with something that is not a chat completion. Check that the base URL ends with the"
+                    + " API version path (for example /v1): " + abbreviate(response.body()));
+        }
+    }
+
+    private static boolean hasJsonArray(String body, String field) {
+        try {
+            return MAPPER.readTree(body).path(field).isArray();
+        } catch (JsonProcessingException e) {
+            return false;
         }
     }
 

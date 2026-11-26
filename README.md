@@ -6,8 +6,7 @@
 
 See who can touch what, which topics are alive and whether your consumers keep up. Or just ask: a team of specialist agents queries live cluster state, historical metrics and logs, then cross-checks its own answer before replying.
 
-![KafkaTower assistant answering "who is using the topic orders.events"](docs/screenshots/06-assistant-orders-events.png)
-
+![img.png](img.png)
 </div>
 
 ---
@@ -32,7 +31,7 @@ flowchart TD
     C -- complete --> G[Secret-leak guardrail] --> Out[Answer, streamed to the chat]
 ```
 
-Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declares goals and actions, and its behaviour is steered by markdown "skills" in `src/main/resources/skills/`.
+Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declares goals and actions, and its behaviour is steered by [Agent Skills](https://agentskills.io/specification): `SKILL.md` directories under each module's `src/main/resources/skills/`, loaded through Embabel's skills library. An agent's role and core instructions are inlined into its system prompt; optional material (investigation playbooks, the metrics catalog and query recipes, admin notes, answer formatting) is offered as an Embabel `Skills` reference that the model reads on demand.
 
 ### The specialists and their tools
 

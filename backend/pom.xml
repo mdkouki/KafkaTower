@@ -122,7 +122,14 @@
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-starter-openai</artifactId>
-            <version>1.5.1</version>
+            <version>1.5.4</version>
+        </dependency>
+
+        <!-- embabel skills -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-skills</artifactId>
+            <version>1.5.4</version>
         </dependency>
 
         <!-- Embabel observability: traces agent/action/tool-loop/LLM spans automatically.
@@ -130,7 +137,7 @@
         <dependency>
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-starter-observability</artifactId>
-            <version>1.5.1</version>
+            <version>1.5.4</version>
         </dependency>
 
         <!-- Standard OTLP span exporter — sends Embabel's spans (registered by

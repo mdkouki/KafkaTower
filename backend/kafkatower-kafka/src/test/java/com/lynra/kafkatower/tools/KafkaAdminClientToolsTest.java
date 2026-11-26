@@ -152,7 +152,7 @@ class KafkaAdminClientToolsTest {
     void listTopicsRejectsBlankRegexWithoutQueryingTheCluster() {
         String output = tools.listTopics("test-cluster", "");
 
-        assertThat(output).contains("non-empty regex is required");
+        assertThat(output).contains("Call listTopics again", "pass \".*\"");
         verifyNoInteractions(adminClient);
     }
 
@@ -274,7 +274,9 @@ class KafkaAdminClientToolsTest {
     void listConsumerGroupsRejectsBlankRegexWithoutQueryingTheCluster() {
         String output = tools.listConsumerGroups("nonexistent-cluster", "");
 
-        assertThat(output).contains("non-empty regex is required").doesNotContain("Unknown cluster");
+        assertThat(output)
+                .contains("Call listConsumerGroups again", "pass \".*\"")
+                .doesNotContain("Unknown cluster");
     }
 
     @Test
