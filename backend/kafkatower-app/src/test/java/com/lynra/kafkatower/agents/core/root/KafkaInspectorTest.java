@@ -72,4 +72,34 @@ class KafkaInspectorTest {
     void isSameGapReturnsFalseWhenEitherReasonHasNoSignificantWords() {
         assertThat(KafkaInspector.isSameGap(FABRICATION, "ok no", FABRICATION, "no ok")).isFalse();
     }
+
+    @Test
+    void aDraftJudgedFabricatedIsWithheldInsteadOfReturned() {
+        Completeness verdict = new Completeness(false, "The draft states 2 topics, evidence shows no result.", FABRICATION);
+
+        assertThat(KafkaInspector.answerFor("There are 2 topics.", verdict)).isEqualTo(KafkaInspector.UNVERIFIED_ANSWER);
+    }
+
+    @Test
+    void theFabricationCategoryIsRecognisedRegardlessOfCaseAndPadding() {
+        assertThat(KafkaInspector.answerFor("draft", new Completeness(false, "r", " Fabrication ")))
+                .isEqualTo(KafkaInspector.UNVERIFIED_ANSWER);
+    }
+
+    @Test
+    void anUnresolvedGapOtherThanFabricationStillReturnsTheDraft() {
+        assertThat(KafkaInspector.answerFor("draft", new Completeness(false, "misses the partition count", MISSING_INFO)))
+                .isEqualTo("draft");
+        assertThat(KafkaInspector.answerFor("draft", new Completeness(false, "wording", null))).isEqualTo("draft");
+    }
+
+    @Test
+    void anAcceptedDraftIsReturnedEvenIfTheReviewerLabelledACategory() {
+        assertThat(KafkaInspector.answerFor("draft", new Completeness(true, "", FABRICATION))).isEqualTo("draft");
+    }
+
+    @Test
+    void aMissingVerdictReturnsTheDraft() {
+        assertThat(KafkaInspector.answerFor("draft", null)).isEqualTo("draft");
+    }
 }

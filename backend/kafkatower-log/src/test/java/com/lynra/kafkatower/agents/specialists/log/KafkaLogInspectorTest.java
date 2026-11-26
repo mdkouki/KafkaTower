@@ -4,8 +4,10 @@ import com.embabel.agent.api.annotation.SpecialReturnException;
 import com.embabel.agent.api.common.Ai;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientProvider;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
-import com.lynra.kafkatower.tools.BulkCollectionTools;
+import com.lynra.kafkatower.collections.LargeResultGuard;
 import com.lynra.kafkatower.tools.OpenSearchQueryTools;
+import com.lynra.kafkatower.utils.AgentSkills;
+import com.lynra.kafkatower.utils.CachedTools;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -28,7 +30,8 @@ import static org.mockito.Mockito.when;
 class KafkaLogInspectorTest {
 
     private static KafkaLogInspector inspector(OpenSearchClientRegistry registry) {
-        return new KafkaLogInspector(registry, mock(OpenSearchQueryTools.class), mock(BulkCollectionTools.class), 15000L);
+        return new KafkaLogInspector(registry, mock(OpenSearchQueryTools.class), mock(CachedTools.class),
+                mock(LargeResultGuard.class), mock(AgentSkills.class), 15000L);
     }
 
     @Test

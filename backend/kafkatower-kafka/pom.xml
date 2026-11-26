@@ -16,8 +16,8 @@
 
     <!-- Live Kafka investigation: KafkaInvestigator specialist, consumer-group inspection
          (GroupService/GroupController), AdminClient config, and the KafkaAdminClientTools LLM
-         tool. Depends on kafkatower-metrics because KafkaInvestigator reuses MetricsSkillTools
-         (Admin First, Metrics Second correlation). -->
+         tool. Depends on kafkatower-metrics because KafkaInvestigator reads its metrics catalog and
+         playbook skills (Admin First, Metrics Second correlation). -->
     <dependencies>
         <dependency>
             <groupId>com.lynra.kafkatower</groupId>

@@ -24,7 +24,7 @@ class LlmConnectionVerifierTest {
     private volatile int modelsStatus = 200;
     private volatile String modelsBody = "{\"data\":[{\"id\":\"gpt-x\"},{\"id\":\"gpt-y\"}]}";
     private volatile int completionStatus = 200;
-    private volatile String completionBody = "{}";
+    private volatile String completionBody = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"pong\"}}]}";
 
     @BeforeEach
     void startServer() throws IOException {
@@ -38,6 +38,9 @@ class LlmConnectionVerifierTest {
                     + new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             reply(exchange, completionStatus, completionBody);
         });
+        server.createContext("/", exchange -> reply(exchange, 200,
+                "{\"error\":\"Unexpected endpoint or method. (" + exchange.getRequestMethod() + " "
+                        + exchange.getRequestURI().getPath() + "). Returning 200 anyway\"}"));
         server.start();
     }
 
@@ -133,5 +136,26 @@ class LlmConnectionVerifierTest {
         assertThatThrownBy(() -> verifier.verify("http://127.0.0.1:" + unusedPort + "/v1", "k", "gpt-x"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageStartingWith("Cannot reach http://127.0.0.1:" + unusedPort + "/v1: ");
+    }
+
+    @Test
+    void rejectsABaseUrlMissingTheVersionPathThatTheEndpointAnswersWith200AndAnErrorBody() {
+        String withoutVersionPath = baseUrl().substring(0, baseUrl().length() - "/v1".length());
+
+        assertThatThrownBy(() -> verifier.verify(withoutVersionPath, "k", "gpt-x"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a chat completion")
+                .hasMessageContaining("/v1")
+                .hasMessageContaining("Unexpected endpoint or method. (POST /chat/completions)");
+    }
+
+    @Test
+    void rejectsAModelListingThatIsAnErrorBodyAndWhoseTestCompletionIsNotACompletion() {
+        modelsBody = "{\"error\":\"nope\"}";
+        completionBody = "{\"error\":\"nope\"}";
+
+        assertThatThrownBy(() -> verifier.verify(baseUrl(), "k", "gpt-x"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a chat completion");
     }
 }

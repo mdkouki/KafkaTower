@@ -17,9 +17,9 @@ import java.util.regex.Matcher;
  * Keys printed by {@code bulkOperation} itself are not tracked: they are intermediate results of a
  * list the LLM already chose to open.
  */
-public final class UnreadCollectionTracker implements ToolCallInspector {
+final class UnreadCollectionTracker implements ToolCallInspector {
 
-    public record UnreadCollection(String key, String producedBy) {
+    record UnreadCollection(String key, String producedBy) {
     }
 
     private final Map<String, String> producerByUnreadKey = new LinkedHashMap<>();

@@ -14,8 +14,8 @@
     <packaging>jar</packaging>
     <name>KafkaTower - Metrics</name>
 
-    <!-- KafkaMetricsInspector specialist + its MetricsSkillTools LLM tool. Also depended on by
-         kafkatower-kafka, since KafkaInvestigator reuses MetricsSkillTools. -->
+    <!-- KafkaMetricsInspector specialist + the metrics catalog and investigation playbook skills. Also
+         depended on by kafkatower-kafka, since KafkaInvestigator reads those two skills. -->
     <dependencies>
         <dependency>
             <groupId>com.lynra.kafkatower</groupId>

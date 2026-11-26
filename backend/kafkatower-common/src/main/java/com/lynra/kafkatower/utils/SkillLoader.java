@@ -6,11 +6,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 /**
- * Utility for loading skill Markdown files from the classpath.
- *
- * In the Embabel model, each skill is a dedicated @Agent class whose system prompt
- * is initialised at startup via loadContent(). The old fromMarkdown() / AgentTool
- * pattern (ADK) no longer applies — see each @Agent's @PostConstruct for usage.
+ * Loads always-on prompt Markdown from the classpath: the shared guardrails in {@code skills/shared/},
+ * the root orchestrator's templated prompt and the single-shot reviewer/classifier prompts. These
+ * must reach the model on every call, so they are inlined into the system prompt.
+ * <p>
+ * Agent Skills (a {@code SKILL.md} directory the model loads on demand) are not read here —
+ * see {@link AgentSkills}.
  */
 public class SkillLoader {
 

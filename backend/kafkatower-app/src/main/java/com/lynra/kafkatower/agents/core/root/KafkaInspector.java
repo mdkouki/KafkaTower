@@ -10,6 +10,7 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.audit.ToolCallEvidenceCollector;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
 import com.lynra.kafkatower.chatbot.AgentStatusEventListener;
+import com.lynra.kafkatower.utils.AgentSkills;
 import com.lynra.kafkatower.utils.SkillLoader;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -42,7 +43,14 @@ public class KafkaInspector {
      *  fact (0.38) versus two unrelated reasons (0.125) — see KafkaInspectorTest. */
     private static final double GAP_OVERLAP_THRESHOLD = 0.35;
 
+    static final String RICH_OUTPUT_SKILL = "rich-output-formatting";
+
+    static final String UNVERIFIED_ANSWER = "I couldn't produce a verified answer to this question. My draft stated facts "
+            + "that the specialists' results did not support, so I am not presenting it. Please try again, "
+            + "or rephrase the question naming the cluster and the resource you care about.";
+
     private final SubAgentTools subAgentTools;
+    private final AgentSkills agentSkills;
 
     /** Draft -> reviewer -> refine, at most this many rounds. Every draft is reviewed, including the last. */
     private final int maxOrchestrationRounds;
@@ -54,9 +62,11 @@ public class KafkaInspector {
     private String completenessCheckPrompt;
 
     public KafkaInspector(SubAgentTools subAgentTools,
+                           AgentSkills agentSkills,
                            @Value("${agent.orchestration.max-rounds:2}") int maxOrchestrationRounds,
                            @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.subAgentTools = subAgentTools;
+        this.agentSkills = agentSkills;
         this.maxOrchestrationRounds = maxOrchestrationRounds;
         this.slowCallThresholdMs = slowCallThresholdMs;
     }
@@ -83,6 +93,7 @@ public class KafkaInspector {
         String gap = null;
         String gapCategory = null;
         String evidenceSnapshot = null;
+        Completeness finalVerdict = null;
         ToolCallEvidenceCollector evidence = new ToolCallEvidenceCollector(subAgentTools.specialistToolNames());
         EnrichedSubAgentTools requestScopedTools = new EnrichedSubAgentTools(subAgentTools, evidence);
 
@@ -98,6 +109,7 @@ public class KafkaInspector {
             draft = LlmCallTimer.timed(log, "draft round " + round, slowCallThresholdMs, () ->
                     ai.withAutoLlm()
                             .withSystemPrompt(orchestrationPrompt)
+                            .withReference(agentSkills.reference(RICH_OUTPUT_SKILL))
                             .withToolObject(requestScopedTools)
                             .withTools(requestScopedTools.specialistTools())
                             .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, evidence)
@@ -120,11 +132,12 @@ public class KafkaInspector {
                                     + "\n\nEvidence actually returned by the specialists this round (the only "
                                     + "source the draft is allowed to state facts from):\n" + evidenceForReview,
                                     Completeness.class));
+            finalVerdict = completeness;
             if (completeness.sufficient()) {
                 break;
             }
             if (round == maxOrchestrationRounds) {
-                log.warn("KafkaInspector exhausted {} rounds still marked insufficient — returning it anyway. Last reviewer reason: {}",
+                log.warn("KafkaInspector exhausted {} rounds still marked insufficient; the draft is returned unless it was judged fabricated. Last reviewer reason: {}",
                         maxOrchestrationRounds, completeness.reason());
                 break;
             }
@@ -138,8 +151,20 @@ public class KafkaInspector {
             gapCategory = completeness.category();
         }
 
-        // The caller cannot tell an accepted draft from one returned after giving up (see the log.warn cases above).
-        return new AgentAnswer(draft);
+        return new AgentAnswer(answerFor(draft, finalVerdict));
+    }
+
+    /**
+     * A draft the reviewer judged fabricated is never returned, however the rounds ended: it states
+     * facts nothing the specialists returned supports, so presenting it is worse than admitting the
+     * answer could not be verified. Other unresolved gaps (missing information, style) still return the draft.
+     */
+    static String answerFor(String draft, Completeness finalVerdict) {
+        if (finalVerdict == null || !finalVerdict.isFabrication()) {
+            return draft;
+        }
+        log.warn("KafkaInspector withheld a draft the reviewer judged fabricated: {}", finalVerdict.reason());
+        return UNVERIFIED_ANSWER;
     }
 
     // Requires the same category AND similar reason text: reason text alone matches distinct complaints sharing

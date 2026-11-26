@@ -35,6 +35,17 @@ public class KafkaAdminClientTools {
     private static final Logger log = LoggerFactory.getLogger(KafkaAdminClientTools.class);
     private static final int TIMEOUT_SEC = 10;
 
+    private static final String TOPIC_REGEX_REQUIRED_MESSAGE = """
+            Rejected: no regex given. Call listTopics again with a non-empty Java regex.
+            Derive it from the question, e.g. "^orders\\." for a prefix or "\\.dlq$" for a suffix.
+            To list or count every topic, pass ".*"; results over 5 come back as a count plus a \
+            collection key, so use bulkOperation to count, filter or page them.""";
+    private static final String GROUP_REGEX_REQUIRED_MESSAGE = """
+            Rejected: no regex given. Call listConsumerGroups again with a non-empty Java regex.
+            Derive it from the question, e.g. "^orders-" for a prefix or "-dlq$" for a suffix.
+            To list or count every group, pass ".*"; results over 5 come back as a count plus a \
+            collection key, so use bulkOperation to count, filter or page them.""";
+
     private static final String UNDER_REPLICATED_MARKER = "[UNDER-REPLICATED]";
     private static final String CONTROLLER_MARKER = "[controller]";
 
@@ -122,9 +133,9 @@ public class KafkaAdminClientTools {
 
     @LlmTool(description = """
             List topic names in the cluster whose name matches a regex. A non-empty regex is
-            REQUIRED — this tool refuses to list all topics unfiltered, since a large cluster can
-            return thousands of names and flood context. Narrow the regex based on what the
-            question is actually about instead of listing everything and scanning the result yourself.
+            REQUIRED — an empty regex is rejected with instructions to retry. Narrow the regex based
+            on what the question is actually about; use ".*" only when the question asks for every
+            topic or a total count.
             The regex is a Java regular expression applied unanchored (it matches anywhere in the
             name); anchor it yourself when needed, e.g. "^orders\\." for a prefix, "\\.dlq$" for a
             suffix, "^(orders|payments)\\..*" for several prefixes.
@@ -135,8 +146,7 @@ public class KafkaAdminClientTools {
     public String listTopics(String clusterName, String regex) {
         if (regex == null || regex.isBlank()) {
             log.warn("listTopics rejected for cluster {}: no regex given", clusterName);
-            return "A non-empty regex is required — pass the specific topic-name regex the " +
-                    "question is about instead of listing every topic in the cluster.";
+            return TOPIC_REGEX_REQUIRED_MESSAGE;
         }
         Pattern pattern;
         try {
@@ -439,10 +449,9 @@ public class KafkaAdminClientTools {
 
     @LlmTool(description = """
             List consumer group IDs in the cluster whose ID matches a regex. A non-empty regex is
-            REQUIRED — this tool refuses to list all groups unfiltered, since a large cluster can
-            return thousands of IDs and flood context. Narrow the regex based on what the
-            question is actually about (a service/team name, a known naming convention) instead
-            of listing everything and scanning the result yourself.
+            REQUIRED — an empty regex is rejected with instructions to retry. Narrow the regex based
+            on what the question is actually about (a service/team name, a known naming convention);
+            use ".*" only when the question asks for every group or a total count.
             The regex is a Java regular expression applied unanchored (it matches anywhere in the
             ID); anchor it yourself when needed, e.g. "^orders-" for a prefix, "-dlq$" for a suffix.
             Parameter clusterName: name of the Kafka cluster.
@@ -452,8 +461,7 @@ public class KafkaAdminClientTools {
     public String listConsumerGroups(String clusterName, String regex) {
         if (regex == null || regex.isBlank()) {
             log.warn("listConsumerGroups rejected for cluster {}: no regex given", clusterName);
-            return "A non-empty regex is required — pass the specific group-ID regex the " +
-                    "question is about instead of listing every consumer group in the cluster.";
+            return GROUP_REGEX_REQUIRED_MESSAGE;
         }
         Pattern pattern;
         try {

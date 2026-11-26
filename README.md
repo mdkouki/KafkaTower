@@ -32,7 +32,7 @@ flowchart TD
     C -- complete --> G[Secret-leak guardrail] --> Out[Answer, streamed to the chat]
 ```
 
-Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declares goals and actions, and its behaviour is steered by markdown "skills" in `src/main/resources/skills/`.
+Built on [Embabel](https://github.com/embabel/embabel-agent): each agent declares goals and actions, and its behaviour is steered by [Agent Skills](https://agentskills.io/specification): `SKILL.md` directories under each module's `src/main/resources/skills/`, loaded through Embabel's skills library. An agent's role and core instructions are inlined into its system prompt; optional material (investigation playbooks, the metrics catalog and query recipes, admin notes, answer formatting) is offered as an Embabel `Skills` reference that the model reads on demand.
 
 ### The specialists and their tools
 

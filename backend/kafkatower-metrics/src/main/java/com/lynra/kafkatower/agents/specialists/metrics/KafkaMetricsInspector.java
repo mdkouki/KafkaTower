@@ -11,12 +11,9 @@ import com.lynra.kafkatower.agents.core.audit.ToolCallAuditLogger;
 import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.MetricsBackend;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
-import com.lynra.kafkatower.collections.FullListEnforcer;
-import com.lynra.kafkatower.collections.UnreadCollectionTracker;
-import com.lynra.kafkatower.tools.BulkCollectionTools;
-import com.lynra.kafkatower.tools.MetricsSkillTools;
-import com.lynra.kafkatower.utils.SkillLoader;
-import jakarta.annotation.PostConstruct;
+import com.lynra.kafkatower.collections.LargeResultGuard;
+import com.lynra.kafkatower.tools.MetricsSkills;
+import com.lynra.kafkatower.utils.AgentSkills;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,29 +27,22 @@ import org.springframework.beans.factory.annotation.Value;
 public class KafkaMetricsInspector implements Specialist<MetricsQuestion, MetricsAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaMetricsInspector.class);
+    static final String SKILL = "kafka-metrics-inspector";
 
-    private final MetricsSkillTools metricsSkillTools;
-    private final BulkCollectionTools bulkCollectionTools;
+    private final AgentSkills agentSkills;
+    private final LargeResultGuard largeResultGuard;
     private final MetricsBackend metricsBackend;
     private final long slowCallThresholdMs;
-    private String basePrompt;
     private volatile String sharedGuidance;
 
-    public KafkaMetricsInspector(MetricsSkillTools metricsSkillTools,
-                                  BulkCollectionTools bulkCollectionTools,
+    public KafkaMetricsInspector(AgentSkills agentSkills,
+                                  LargeResultGuard largeResultGuard,
                                   MetricsBackend metricsBackend,
                                   @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
-        this.metricsSkillTools = metricsSkillTools;
-        this.bulkCollectionTools = bulkCollectionTools;
+        this.agentSkills = agentSkills;
+        this.largeResultGuard = largeResultGuard;
         this.metricsBackend = metricsBackend;
         this.slowCallThresholdMs = slowCallThresholdMs;
-    }
-
-    @PostConstruct
-    void loadSkill() {
-        // The metrics catalog is fetched on demand via MetricsSkillTools.getMetricsCatalog; shared
-        // guidance is injected later through applySharedGuidance.
-        basePrompt = SkillLoader.loadContent("/skills/KAFKA_METRICS_INSPECTOR.md");
     }
 
     @Override
@@ -61,8 +51,7 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
     }
 
     private String systemPrompt() {
-        String guidance = sharedGuidance;
-        return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
+        return agentSkills.systemPrompt(SKILL, sharedGuidance);
     }
 
     @AchievesGoal(description = "Kafka metrics question answered")
@@ -81,7 +70,7 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
                 "Kafka time-series data",
                 "Start with `metrics` (discovery, at most once) using the narrowest pattern for "
                         + "the question, then `query` (instant, default) or `query_range` (only for "
-                        + "an explicit trend/history request), per the workflow in your system prompt.");
+                        + "an explicit trend/history request), per the workflow in your skill.");
         // Non-streaming on purpose: the streaming call path (StreamingLlmOperationsImpl)
         // resolves its tool list once via ToolResolutionHelper and hands it to the raw LLM
         // stream — it never re-evaluates ToolInjectionStrategy between rounds. UnfoldingTool's
@@ -91,16 +80,14 @@ public class KafkaMetricsInspector implements Specialist<MetricsQuestion, Metric
         // tool. This specialist's own token stream is suppressed by the caller anyway
         // (SubAgentTools.run), so streaming bought nothing here — createObject uses the
         // ordinary tool loop where Unfolding actually works.
-        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "metrics answer", slowCallThresholdMs, () ->
-                FullListEnforcer.answer(ai.withAutoLlm()
+                largeResultGuard.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt())
+                        .withReference(agentSkills.reference(MetricsSkills.QUERIES, MetricsSkills.CATALOG))
                         .withTool(metricsTools)
-                        .withToolObject(metricsSkillTools)
-                        .withToolObject(bulkCollectionTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
-                        question.text(), unreadCollections));
+                        question.text()));
         return new MetricsAnswer(response);
     }
 

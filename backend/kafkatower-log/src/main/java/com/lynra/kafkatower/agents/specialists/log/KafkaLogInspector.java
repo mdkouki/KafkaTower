@@ -13,12 +13,10 @@ import com.lynra.kafkatower.agents.core.specialist.Specialist;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientProvider;
 import com.lynra.kafkatower.agents.specialists.config.OpenSearchClientRegistry;
 import com.lynra.kafkatower.agents.core.guardrails.NoSecretLeakageGuardRail;
-import com.lynra.kafkatower.collections.FullListEnforcer;
-import com.lynra.kafkatower.collections.UnreadCollectionTracker;
-import com.lynra.kafkatower.tools.BulkCollectionTools;
+import com.lynra.kafkatower.collections.LargeResultGuard;
 import com.lynra.kafkatower.tools.OpenSearchQueryTools;
-import com.lynra.kafkatower.utils.SkillLoader;
-import jakarta.annotation.PostConstruct;
+import com.lynra.kafkatower.utils.AgentSkills;
+import com.lynra.kafkatower.utils.CachedTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,26 +37,25 @@ import java.util.Set;
 public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaLogInspector.class);
+    static final String SKILL = "kafka-log-inspector";
 
     private final OpenSearchClientRegistry registry;
     private final OpenSearchQueryTools queryTools;
-    private final BulkCollectionTools bulkCollectionTools;
+    private final CachedTools cachedTools;
+    private final LargeResultGuard largeResultGuard;
+    private final AgentSkills agentSkills;
     private final long slowCallThresholdMs;
-    private String basePrompt;
     private volatile String sharedGuidance;
 
     public KafkaLogInspector(OpenSearchClientRegistry registry, OpenSearchQueryTools queryTools,
-                              BulkCollectionTools bulkCollectionTools,
+                              CachedTools cachedTools, LargeResultGuard largeResultGuard, AgentSkills agentSkills,
                               @Value("${agent.llm.slow-call-warning-ms:15000}") long slowCallThresholdMs) {
         this.registry = registry;
         this.queryTools = queryTools;
-        this.bulkCollectionTools = bulkCollectionTools;
+        this.cachedTools = cachedTools;
+        this.largeResultGuard = largeResultGuard;
+        this.agentSkills = agentSkills;
         this.slowCallThresholdMs = slowCallThresholdMs;
-    }
-
-    @PostConstruct
-    void loadSkill() {
-        basePrompt = SkillLoader.loadContent("/skills/KAFKA_LOG_INSPECTOR.md");
     }
 
     @Override
@@ -67,8 +64,7 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
     }
 
     private String systemPrompt() {
-        String guidance = sharedGuidance;
-        return guidance == null ? basePrompt : basePrompt + "\n\n" + guidance;
+        return agentSkills.systemPrompt(SKILL, sharedGuidance);
     }
 
     // Throwing a SpecialReturnException with type = LogAnswer.class makes the framework place that
@@ -124,15 +120,13 @@ public class KafkaLogInspector implements Specialist<LogQuestion, LogAnswer> {
         // specialist's own token stream is suppressed by the caller anyway
         // (SubAgentTools.run), so streaming bought nothing here and risked the LLM never
         // actually reaching search_documents/aggregate_documents/get_document.
-        UnreadCollectionTracker unreadCollections = new UnreadCollectionTracker();
         String response = LlmCallTimer.timed(log, "log answer", slowCallThresholdMs, () ->
-                FullListEnforcer.answer(ai.withAutoLlm()
+                largeResultGuard.answer(ai.withAutoLlm()
                         .withSystemPrompt(systemPrompt() + "\n\nYou are querying cluster '" + provider.clusterName() + "'.")
-                        .withToolObject(queryTools)
-                        .withToolObject(bulkCollectionTools)
-                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE, unreadCollections)
+                        .withTools(cachedTools.from(queryTools))
+                        .withToolCallInspectors(ToolCallAuditLogger.INSTANCE)
                         .withGuardRails(NoSecretLeakageGuardRail.INSTANCE),
-                        question.text(), unreadCollections));
+                        question.text()));
         log.info("Log inspection completed for cluster '{}'", provider.clusterName());
         String prefix = resolution.note() != null ? "(" + resolution.note() + ")\n\n" : "";
         return new LogAnswer(prefix + response);
